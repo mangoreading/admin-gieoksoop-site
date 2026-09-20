@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>결제관리 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage } from './js/admin-guard.js';
+
+  await guardAdminPage({
+    activeKey: 'payments',
+    title: '결제관리',
+    desc: 'PortOne(포트원) 연동 전까지는 준비 화면만 표시돼요.',
+  });
+
+  document.getElementById('adminContent').innerHTML = `
+    <div class="panel">
+      <div class="panel-body" style="text-align:center;padding:56px 24px;">
+        <div style="font-size:15px;color:var(--ink-dim);margin-bottom:8px;">🚧 아직 준비 중이에요</div>
+        <h2 style="margin:0 0 10px;">결제관리는 PortOne 연동 이후 열립니다</h2>
+        <p style="color:var(--ink-dim);font-size:14px;max-width:480px;margin:0 auto;">
+          통신판매업 신고, PG사 가맹점 계약, PortOne API 키 발급이 끝나야 실제 결제 내역이 쌓여요.
+          그 전까지 회원의 구독 상태를 수동으로 바꿔야 한다면 <a href="members.html">회원관리</a> 화면의 상세보기에서
+          "구독 상태"를 직접 조정할 수 있습니다(계좌이체 등으로 결제를 직접 확인했을 때만 사용).
+        </p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><div><h2>연동 후 이 화면이 다룰 내용 (메모)</h2><p>결제 연동 시점에 참고할 최소 스펙 초안이에요.</p></div></div>
+      <div class="panel-body">
+        <ul style="margin:0;padding-left:20px;color:var(--ink-dim);font-size:14px;line-height:1.9;">
+          <li>결제 내역 목록: 회원, 결제일시, 금액, 플랜, 상태(성공/실패/환불), PortOne 거래 ID</li>
+          <li>정기결제(빌링키) 다음 결제 예정일, 실패 시 재시도 이력</li>
+          <li>환불 처리 버튼(부분/전액) 및 사유 기록</li>
+          <li>매출 요약(일/월별), 플랜별 구독자 수 추이</li>
+          <li>결제 실패·카드 만료 임박 회원에게 보낼 알림 목록</li>
+        </ul>
+      </div>
+    </div>
+  `;
+</script>
+
+</body>
+</html>

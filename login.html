@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>관리자 로그인 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="center-wrap">
+  <div class="card">
+    <div class="brand-mark"><img src="img/apple-touch-icon.png" alt="">기억숲 Admin</div>
+    <h2>관리자 로그인</h2>
+    <p class="desc">기억숲 서비스 운영자 계정으로 로그인하세요.</p>
+
+    <div class="form-error" id="errorBox"></div>
+
+    <form id="loginForm">
+      <div class="form-field">
+        <label for="email">이메일</label>
+        <input type="email" id="email" autocomplete="username" required>
+      </div>
+      <div class="form-field">
+        <label for="password">비밀번호</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block" id="submitBtn">로그인</button>
+    </form>
+    <p class="form-hint" style="margin-top:18px;text-align:center;">일반 회원 계정으로는 접근할 수 없어요. 관리자 권한이 필요합니다.</p>
+  </div>
+</div>
+
+<script type="module">
+  import { auth, db, adminLogin, friendlyAdminError } from './js/admin-guard.js';
+  import { onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+  import { doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  const form = document.getElementById('loginForm');
+  const errorBox = document.getElementById('errorBox');
+  const submitBtn = document.getElementById('submitBtn');
+
+  // 쿼리스트링으로 넘어온 접근 거부 사유가 있으면 미리 안내
+  const params = new URLSearchParams(window.location.search);
+  const errorParam = params.get('error');
+  if (errorParam === 'not_admin') {
+    errorBox.textContent = '이 계정은 관리자로 등록되어 있지 않아요.';
+    errorBox.style.display = 'block';
+  } else if (errorParam === 'forbidden') {
+    errorBox.textContent = '이 화면은 슈퍼관리자만 볼 수 있어요.';
+    errorBox.style.display = 'block';
+  }
+
+  // 이미 관리자로 로그인돼 있으면 바로 대시보드로
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) return;
+    try {
+      const snap = await getDoc(doc(db, 'admins', user.uid));
+      if (snap.exists()) window.location.href = 'index.html';
+    } catch (e) { /* 규칙상 admins 문서를 못 읽으면 그냥 로그인 폼 유지 */ }
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorBox.style.display = 'none';
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '로그인 중...';
+
+    try {
+      await adminLogin(email, password);
+      window.location.href = 'index.html';
+    } catch (err) {
+      errorBox.textContent = friendlyAdminError(err);
+      errorBox.style.display = 'block';
+      submitBtn.disabled = false;
+      submitBtn.textContent = '로그인';
+    }
+  });
+</script>
+
+</body>
+</html>

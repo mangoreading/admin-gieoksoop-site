@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>회원관리 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
+  import { collection, getDocs, doc, updateDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  await guardAdminPage({
+    activeKey: 'members',
+    title: '회원관리',
+    desc: '가입한 회원 목록을 확인하고, 필요하면 구독 상태를 수동으로 조정할 수 있어요.',
+  });
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div class="toolbar">
+          <input type="search" id="searchInput" placeholder="이름 또는 이메일로 검색">
+        </div>
+        <span class="muted" id="countLabel"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th><th>플랜</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="6" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('tbody');
+  const countLabel = document.getElementById('countLabel');
+  const searchInput = document.getElementById('searchInput');
+
+  function fmtDate(ts) {
+    if (!ts || !ts.toDate) return '-';
+    const d = ts.toDate();
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function statusPill(status) {
+    if (status === 'active') return '<span class="pill pill-ok">구독중</span>';
+    if (status === 'canceled') return '<span class="pill pill-danger">해지</span>';
+    return '<span class="pill pill-muted">미구독</span>';
+  }
+
+  let allUsers = [];
+
+  function render(list) {
+    countLabel.textContent = `${list.length.toLocaleString()}명`;
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-row">검색 결과가 없어요.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list
+      .map(
+        (u) => `
+      <tr>
+        <td>${escapeHtml(u.name || '-')}</td>
+        <td>${escapeHtml(u.email || '-')}</td>
+        <td class="muted">${fmtDate(u.created_at)}</td>
+        <td>${statusPill(u.subscription_status)}</td>
+        <td class="muted">${escapeHtml(u.subscription_plan || '-')}</td>
+        <td><button class="btn btn-outline btn-sm" data-detail="${u.id}">상세</button></td>
+      </tr>`
+      )
+      .join('');
+
+    tbody.querySelectorAll('[data-detail]').forEach((btn) => {
+      btn.addEventListener('click', () => openDetail(btn.getAttribute('data-detail')));
+    });
+  }
+
+  function openDetail(uid) {
+    const u = allUsers.find((x) => x.id === uid);
+    if (!u) return;
+    openModal(`
+      <h3>회원 상세</h3>
+      <div class="form-field"><label>이름</label><input type="text" id="editName" value="${escapeHtml(u.name || '')}"></div>
+      <div class="form-field"><label>이메일 (수정 불가)</label><input type="text" value="${escapeHtml(u.email || '')}" disabled></div>
+      <div class="form-field"><label>가입일 (수정 불가)</label><input type="text" value="${fmtDate(u.created_at)}" disabled></div>
+      <div class="form-field">
+        <label>구독 상태</label>
+        <select id="editStatus">
+          <option value="none" ${u.subscription_status === 'none' || !u.subscription_status ? 'selected' : ''}>미구독 (none)</option>
+          <option value="active" ${u.subscription_status === 'active' ? 'selected' : ''}>구독중 (active)</option>
+          <option value="canceled" ${u.subscription_status === 'canceled' ? 'selected' : ''}>해지 (canceled)</option>
+        </select>
+        <p class="form-hint">결제 연동 전이라, 계좌이체 등으로 수동 결제를 확인했을 때만 여기서 직접 바꿔주세요.</p>
+      </div>
+      <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
+      <p class="form-hint">uid: ${escapeHtml(u.id)}</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+        <button type="button" class="btn btn-primary" id="saveBtn">저장</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const name = document.getElementById('editName').value.trim();
+      const subscription_status = document.getElementById('editStatus').value;
+      const subscription_plan = document.getElementById('editPlan').value.trim() || null;
+      try {
+        await updateDoc(doc(db, 'users', uid), { name, subscription_status, subscription_plan });
+        u.name = name;
+        u.subscription_status = subscription_status;
+        u.subscription_plan = subscription_plan;
+        closeModal();
+        toast('저장했어요.');
+        render(filterList(searchInput.value));
+      } catch (e) {
+        toast('저장하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  function filterList(q) {
+    const needle = (q || '').trim().toLowerCase();
+    if (!needle) return allUsers;
+    return allUsers.filter(
+      (u) => (u.name || '').toLowerCase().includes(needle) || (u.email || '').toLowerCase().includes(needle)
+    );
+  }
+
+  searchInput.addEventListener('input', () => render(filterList(searchInput.value)));
+
+  try {
+    const snap = await getDocs(collection(db, 'users'));
+    allUsers = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => {
+        const ta = a.created_at && a.created_at.toDate ? a.created_at.toDate().getTime() : 0;
+        const tb = b.created_at && b.created_at.toDate ? b.created_at.toDate().getTime() : 0;
+        return tb - ta;
+      });
+    render(allUsers);
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
+</script>
+
+</body>
+</html>

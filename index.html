@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>대시보드 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, db, escapeHtml } from './js/admin-guard.js';
+  import { collection, getDocs, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  await guardAdminPage({
+    activeKey: 'dashboard',
+    title: '대시보드',
+    desc: '기억숲 서비스 현황을 한눈에 확인하세요.',
+  });
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `<p class="muted">불러오는 중...</p>`;
+
+  function fmtDate(ts) {
+    if (!ts || !ts.toDate) return '-';
+    const d = ts.toDate();
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  try {
+    const [usersSnap, noticesSnap, guidesSnap] = await Promise.all([
+      getDocs(collection(db, 'users')),
+      getDocs(collection(db, 'notices')),
+      getDocs(collection(db, 'guides')),
+    ]);
+
+    const users = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const now = Date.now();
+    const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+    const totalUsers = users.length;
+    const newThisWeek = users.filter((u) => u.created_at && u.created_at.toDate && u.created_at.toDate().getTime() >= weekAgo).length;
+    const activeSubs = users.filter((u) => u.subscription_status === 'active').length;
+    const noticeCount = noticesSnap.size;
+    const guideCount = guidesSnap.size;
+
+    const recent = users
+      .slice()
+      .sort((a, b) => {
+        const ta = a.created_at && a.created_at.toDate ? a.created_at.toDate().getTime() : 0;
+        const tb = b.created_at && b.created_at.toDate ? b.created_at.toDate().getTime() : 0;
+        return tb - ta;
+      })
+      .slice(0, 8);
+
+    content.innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-card"><div class="num">${totalUsers.toLocaleString()}</div><div class="label">전체 회원</div></div>
+        <div class="stat-card"><div class="num">${newThisWeek.toLocaleString()}</div><div class="label">최근 7일 신규가입</div></div>
+        <div class="stat-card"><div class="num">${activeSubs.toLocaleString()}</div><div class="label">구독 중인 회원</div></div>
+        <div class="stat-card"><div class="num">${guideCount.toLocaleString()}</div><div class="label">가이드 섹션</div></div>
+        <div class="stat-card"><div class="num">${noticeCount.toLocaleString()}</div><div class="label">등록된 공지사항</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>최근 가입 회원</h2>
+            <p>가장 최근에 가입한 회원 ${recent.length}명이에요.</p>
+          </div>
+          <a href="members.html" class="btn btn-outline btn-sm">회원관리 전체보기</a>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th></tr></thead>
+            <tbody>
+              ${recent.length === 0
+                ? `<tr><td colspan="4" class="empty-row">아직 가입한 회원이 없어요.</td></tr>`
+                : recent
+                    .map(
+                      (u) => `
+                <tr>
+                  <td>${escapeHtml(u.name || '-')}</td>
+                  <td>${escapeHtml(u.email || '-')}</td>
+                  <td class="muted">${fmtDate(u.created_at)}</td>
+                  <td>${u.subscription_status === 'active' ? '<span class="pill pill-ok">구독중</span>' : '<span class="pill pill-muted">미구독</span>'}</td>
+                </tr>`
+                    )
+                    .join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><div><h2>바로가기</h2></div></div>
+        <div class="panel-body" style="display:flex;gap:12px;flex-wrap:wrap;">
+          <a href="guides.html" class="btn btn-outline btn-sm">가이드 관리</a>
+          <a href="notices.html" class="btn btn-outline btn-sm">공지사항 관리</a>
+          <a href="members.html" class="btn btn-outline btn-sm">회원관리</a>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    content.innerHTML = `<div class="panel"><div class="panel-body">데이터를 불러오지 못했어요: ${escapeHtml(e.message || String(e))}</div></div>`;
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>공지사항 관리 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
+  import {
+    collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy,
+  } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  const { uid } = await guardAdminPage({
+    activeKey: 'notices',
+    title: '공지사항 관리',
+    desc: '공개 사이트(gieoksoop.com/notice.html)에 노출되는 공지사항을 관리해요.',
+  });
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div><h2>공지사항 목록</h2><p>상단 고정(📌)한 공지가 항상 먼저 보여요.</p></div>
+        <button class="btn btn-primary btn-sm" id="addBtn">+ 새 공지</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>제목</th><th>등록일</th><th>고정</th><th>게시상태</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="5" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('tbody');
+  let notices = [];
+
+  function fmtDate(ts) {
+    if (!ts) return '-';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function sortNotices(list) {
+    return list.slice().sort((a, b) => {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      const ta = a.created_at && a.created_at.toDate ? a.created_at.toDate().getTime() : 0;
+      const tb = b.created_at && b.created_at.toDate ? b.created_at.toDate().getTime() : 0;
+      return tb - ta;
+    });
+  }
+
+  function render() {
+    const sorted = sortNotices(notices);
+    if (sorted.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-row">등록된 공지사항이 없어요.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = sorted
+      .map(
+        (n) => `
+      <tr>
+        <td>${escapeHtml(n.title)}</td>
+        <td class="muted">${fmtDate(n.created_at)}</td>
+        <td>${n.pinned ? '📌 고정' : '-'}</td>
+        <td>${n.published === false ? '<span class="pill pill-muted">비공개</span>' : '<span class="pill pill-ok">공개중</span>'}</td>
+        <td>
+          <button class="btn btn-outline btn-sm" data-edit="${n.id}">수정</button>
+          <button class="btn btn-danger btn-sm" data-del="${n.id}">삭제</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+    tbody.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => openEditor(b.getAttribute('data-edit'))));
+    tbody.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => removeNotice(b.getAttribute('data-del'))));
+  }
+
+  async function load() {
+    const snap = await getDocs(collection(db, 'notices'));
+    notices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    render();
+  }
+
+  function removeNotice(id) {
+    const n = notices.find((x) => x.id === id);
+    if (!n) return;
+    openModal(`
+      <h3>공지사항 삭제</h3>
+      <p>"${escapeHtml(n.title)}"를 삭제할까요?</p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-danger" id="confirmBtn">삭제</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      try {
+        await deleteDoc(doc(db, 'notices', id));
+        closeModal();
+        toast('삭제했어요.');
+        await load();
+      } catch (e) {
+        toast('삭제하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  function openEditor(id) {
+    const n = id ? notices.find((x) => x.id === id) : null;
+    const isNew = !n;
+    openModal(`
+      <h3>${isNew ? '새 공지사항' : '공지사항 수정'}</h3>
+      <div class="form-field"><label>제목</label><input type="text" id="fTitle" value="${escapeHtml(n ? n.title : '')}"></div>
+      <div class="form-field"><label>내용 (문단 사이는 빈 줄로 구분)</label><textarea id="fBody" rows="7">${escapeHtml(n ? n.body : '')}</textarea></div>
+      <div class="form-field">
+        <label><input type="checkbox" id="fPinned" ${n && n.pinned ? 'checked' : ''} style="width:auto;margin-right:6px;">상단 고정</label>
+      </div>
+      <div class="form-field">
+        <label><input type="checkbox" id="fPublished" ${!n || n.published !== false ? 'checked' : ''} style="width:auto;margin-right:6px;">공개 사이트에 노출</label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-primary" id="saveBtn">저장</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const title = document.getElementById('fTitle').value.trim();
+      const body = document.getElementById('fBody').value.trim();
+      const pinned = document.getElementById('fPinned').checked;
+      const published = document.getElementById('fPublished').checked;
+      if (!title || !body) {
+        toast('제목과 내용을 입력해 주세요.', true);
+        return;
+      }
+      try {
+        if (isNew) {
+          await addDoc(collection(db, 'notices'), {
+            title, body, pinned, published, created_at: new Date(), updated_at: new Date(), updated_by: uid,
+          });
+        } else {
+          await updateDoc(doc(db, 'notices', n.id), { title, body, pinned, published, updated_at: new Date(), updated_by: uid });
+        }
+        closeModal();
+        toast('저장했어요.');
+        await load();
+      } catch (e) {
+        toast('저장하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  document.getElementById('addBtn').addEventListener('click', () => openEditor(null));
+
+  try {
+    await load();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
+</script>
+
+</body>
+</html>

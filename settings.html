@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>시스템 설정 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
+  import { doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  const { uid: myUid } = await guardAdminPage({
+    activeKey: 'settings',
+    title: '시스템 설정',
+    desc: '슈퍼관리자만 볼 수 있는 화면이에요. 서비스 운영에 필요한 key-value 값을 관리해요.',
+    requireSuperAdmin: true,
+  });
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-body" style="font-size:13.5px;color:var(--ink-dim);">
+        아직 정해진 항목이 없는 범용 설정 테이블이에요. 예를 들어 <code>app_download_url</code>(앱 다운로드 링크),
+        <code>support_email</code>(고객문의 이메일), <code>maintenance_mode</code>(점검 모드 on/off) 같은 값을
+        여기서 관리하고, 필요할 때 사이트 코드에서 읽어 쓰도록 계속 확장해나갈 예정이에요.
+        <br><span style="color:var(--danger);">비밀키(API secret key)처럼 정말 민감한 값은 여기 저장하지 마세요 — 이 화면은 관리자 전원이 볼 수 있어요.</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div><h2>설정 항목</h2></div>
+        <button class="btn btn-primary btn-sm" id="addBtn">+ 항목 추가</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>키</th><th>값</th><th>설명</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="4" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('tbody');
+  let entries = [];
+
+  function render() {
+    if (entries.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-row">등록된 설정 항목이 없어요.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = entries
+      .map(
+        (e, i) => `
+      <tr>
+        <td><code>${escapeHtml(e.key)}</code></td>
+        <td>${escapeHtml(e.value)}</td>
+        <td class="muted">${escapeHtml(e.note || '-')}</td>
+        <td>
+          <button class="btn btn-outline btn-sm" data-edit="${i}">수정</button>
+          <button class="btn btn-danger btn-sm" data-del="${i}">삭제</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+    tbody.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => openEditor(Number(b.getAttribute('data-edit')))));
+    tbody.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => removeEntry(Number(b.getAttribute('data-del')))));
+  }
+
+  async function load() {
+    const snap = await getDoc(doc(db, 'system_config', 'settings'));
+    entries = snap.exists() && Array.isArray(snap.data().entries) ? snap.data().entries : [];
+    render();
+  }
+
+  async function persist() {
+    await setDoc(doc(db, 'system_config', 'settings'), { entries, updated_at: new Date(), updated_by: myUid });
+  }
+
+  function removeEntry(i) {
+    const e = entries[i];
+    openModal(`
+      <h3>설정 항목 삭제</h3>
+      <p><code>${escapeHtml(e.key)}</code> 항목을 삭제할까요?</p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-danger" id="confirmBtn">삭제</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      try {
+        entries.splice(i, 1);
+        await persist();
+        closeModal();
+        toast('삭제했어요.');
+        render();
+      } catch (err) {
+        toast('삭제하지 못했어요: ' + (err.message || err), true);
+      }
+    });
+  }
+
+  function openEditor(i) {
+    const isNew = i === undefined || i === null;
+    const e = isNew ? { key: '', value: '', note: '' } : entries[i];
+    openModal(`
+      <h3>${isNew ? '설정 항목 추가' : '설정 항목 수정'}</h3>
+      <div class="form-field"><label>키</label><input type="text" id="fKey" value="${escapeHtml(e.key)}" placeholder="예: app_download_url" ${isNew ? '' : 'readonly'}></div>
+      <div class="form-field"><label>값</label><input type="text" id="fValue" value="${escapeHtml(e.value)}"></div>
+      <div class="form-field"><label>설명 (선택)</label><input type="text" id="fNote" value="${escapeHtml(e.note || '')}"></div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-primary" id="saveBtn">저장</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const key = document.getElementById('fKey').value.trim();
+      const value = document.getElementById('fValue').value.trim();
+      const note = document.getElementById('fNote').value.trim();
+      if (!key) {
+        toast('키를 입력해 주세요.', true);
+        return;
+      }
+      if (isNew && entries.some((x) => x.key === key)) {
+        toast('이미 있는 키예요. 다른 이름을 써주세요.', true);
+        return;
+      }
+      try {
+        if (isNew) entries.push({ key, value, note });
+        else entries[i] = { key, value, note };
+        await persist();
+        closeModal();
+        toast('저장했어요.');
+        render();
+      } catch (err) {
+        toast('저장하지 못했어요: ' + (err.message || err), true);
+      }
+    });
+  }
+
+  document.getElementById('addBtn').addEventListener('click', () => openEditor(null));
+
+  try {
+    await load();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
+</script>
+
+</body>
+</html>

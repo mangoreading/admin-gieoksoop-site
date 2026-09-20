@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>관리자 계정 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
+  import {
+    collection, getDocs, query, where, setDoc, updateDoc, deleteDoc, doc,
+  } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  const { uid: myUid } = await guardAdminPage({
+    activeKey: 'admins',
+    title: '관리자 계정',
+    desc: '슈퍼관리자만 볼 수 있는 화면이에요. 관리자를 추가하거나 권한을 바꿀 수 있어요.',
+    requireSuperAdmin: true,
+  });
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-body" style="font-size:13.5px;color:var(--ink-dim);">
+        관리자를 추가하려면, 그 사람이 먼저 <a href="https://gieoksoop.com/signup.html" target="_blank">일반 회원가입</a>을
+        마쳐야 해요. 이미 가입한 이메일 주소를 아래에서 입력하면 관리자 권한을 부여합니다.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div><h2>관리자 목록</h2><p><b>슈퍼관리자</b>는 관리자 계정·시스템 설정까지 다루고, <b>관리자</b>는 회원·가이드·공지사항만 다뤄요.</p></div>
+        <button class="btn btn-primary btn-sm" id="addBtn">+ 관리자 추가</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>이름</th><th>이메일</th><th>권한</th><th>추가일</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="5" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('tbody');
+  let admins = [];
+
+  function fmtDate(ts) {
+    if (!ts || !ts.toDate) return '-';
+    const d = ts.toDate();
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function render() {
+    if (admins.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-row">등록된 관리자가 없어요.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = admins
+      .map(
+        (a) => `
+      <tr>
+        <td>${escapeHtml(a.name || '-')} ${a.id === myUid ? '<span class="pill pill-muted">나</span>' : ''}</td>
+        <td>${escapeHtml(a.email || '-')}</td>
+        <td>${a.role === 'superadmin' ? '<span class="pill pill-accent">슈퍼관리자</span>' : '<span class="pill pill-muted">관리자</span>'}</td>
+        <td class="muted">${fmtDate(a.added_at)}</td>
+        <td>
+          <button class="btn btn-outline btn-sm" data-edit="${a.id}">권한 변경</button>
+          <button class="btn btn-danger btn-sm" data-del="${a.id}" ${a.id === myUid ? 'disabled title="본인 계정은 삭제할 수 없어요"' : ''}>삭제</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+    tbody.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => openRoleEditor(b.getAttribute('data-edit'))));
+    tbody.querySelectorAll('[data-del]:not([disabled])').forEach((b) => b.addEventListener('click', () => removeAdmin(b.getAttribute('data-del'))));
+  }
+
+  async function load() {
+    const snap = await getDocs(collection(db, 'admins'));
+    admins = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    render();
+  }
+
+  function openRoleEditor(id) {
+    const a = admins.find((x) => x.id === id);
+    if (!a) return;
+    const isSelf = id === myUid;
+    openModal(`
+      <h3>권한 변경</h3>
+      <p>${escapeHtml(a.email)}</p>
+      ${isSelf ? '<p class="form-hint" style="color:var(--danger);">본인 권한을 낮추면, 지금 바로 슈퍼관리자 전용 화면 접근 권한을 잃을 수 있어요.</p>' : ''}
+      <div class="form-field">
+        <label>권한</label>
+        <select id="fRole">
+          <option value="admin" ${a.role !== 'superadmin' ? 'selected' : ''}>관리자</option>
+          <option value="superadmin" ${a.role === 'superadmin' ? 'selected' : ''}>슈퍼관리자</option>
+        </select>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-primary" id="saveBtn">저장</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const role = document.getElementById('fRole').value;
+      try {
+        await updateDoc(doc(db, 'admins', id), { role });
+        closeModal();
+        toast('저장했어요.');
+        await load();
+      } catch (e) {
+        toast('저장하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  function removeAdmin(id) {
+    const a = admins.find((x) => x.id === id);
+    if (!a) return;
+    openModal(`
+      <h3>관리자 삭제</h3>
+      <p>${escapeHtml(a.email)} 님의 관리자 권한을 없앨까요? (회원 계정 자체는 그대로 남아요)</p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-danger" id="confirmBtn">삭제</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      try {
+        await deleteDoc(doc(db, 'admins', id));
+        closeModal();
+        toast('삭제했어요.');
+        await load();
+      } catch (e) {
+        toast('삭제하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  document.getElementById('addBtn').addEventListener('click', () => {
+    openModal(`
+      <h3>관리자 추가</h3>
+      <div class="form-field"><label>이메일 (이미 회원가입한 계정)</label><input type="email" id="fEmail" placeholder="name@example.com"></div>
+      <div class="form-field">
+        <label>권한</label>
+        <select id="fRole">
+          <option value="admin">관리자</option>
+          <option value="superadmin">슈퍼관리자</option>
+        </select>
+      </div>
+      <div class="form-error" id="addError"></div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-primary" id="confirmAddBtn">추가</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('confirmAddBtn').addEventListener('click', async () => {
+      const email = document.getElementById('fEmail').value.trim().toLowerCase();
+      const role = document.getElementById('fRole').value;
+      const errorBox = document.getElementById('addError');
+      errorBox.style.display = 'none';
+      if (!email) return;
+      try {
+        const q = query(collection(db, 'users'), where('email', '==', email));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          errorBox.textContent = '이 이메일로 가입한 회원을 찾을 수 없어요. 먼저 회원가입부터 진행해 주세요.';
+          errorBox.style.display = 'block';
+          return;
+        }
+        const targetDoc = snap.docs[0];
+        await setDoc(doc(db, 'admins', targetDoc.id), {
+          email, role, name: targetDoc.data().name || '', added_at: new Date(), added_by: myUid,
+        });
+        closeModal();
+        toast('관리자를 추가했어요.');
+        await load();
+      } catch (e) {
+        errorBox.textContent = '추가하지 못했어요: ' + (e.message || e);
+        errorBox.style.display = 'block';
+      }
+    });
+  });
+
+  try {
+    await load();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
+</script>
+
+</body>
+</html>

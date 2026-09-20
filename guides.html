@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>가이드 관리 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
+  import {
+    collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy,
+  } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  const { uid } = await guardAdminPage({
+    activeKey: 'guides',
+    title: '가이드 관리',
+    desc: '공개 사이트(gieoksoop.com/guide.html)에 그대로 노출되는 사용가이드 섹션을 관리해요.',
+  });
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div class="panel" id="seedBanner" style="display:none;">
+      <div class="panel-body" style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+        <div>
+          <strong>아직 등록된 가이드가 없어요.</strong>
+          <p class="form-hint" style="margin-top:4px;">지금 공개 사이트에 있는 9개 섹션 그대로 불러와서 시작할 수 있어요.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="seedBtn">기존 콘텐츠 불러오기</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div><h2>섹션 목록</h2><p>공개 페이지에는 순서(위/아래)대로, 게시중인 섹션만 보여요.</p></div>
+        <button class="btn btn-primary btn-sm" id="addBtn">+ 새 섹션</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th style="width:70px;">순서</th><th>제목</th><th>배지</th><th>앵커(#id)</th><th>게시상태</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="6" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('tbody');
+  const seedBanner = document.getElementById('seedBanner');
+
+  // 현재 공개 사이트(guide.html)에 이미 있는 9개 섹션 — 최초 1회 불러오기용 시드 데이터.
+  // guide.html의 정적 콘텐츠와 100% 동일한 문구를 유지한다.
+  const SEED_SECTIONS = [
+    { anchor_id: 'start', title: '시작하기 — 사진 폴더 연결', badge: '', body: '기억숲을 처음 실행하면 온보딩 화면에서 사진·영상이 들어있는 폴더(내 컴퓨터의 폴더, 외장하드 등)를 연결합니다. 사진 파일은 옮기거나 복사되지 않고, 그 자리에 그대로 둔 채 기억숲이 분석만 합니다.\n\n폴더를 연결하면 스캔이 시작되고, 촬영 날짜(EXIF)·위치(GPS)·얼굴 정보를 분석해 사진들을 자동으로 사건(이벤트) 단위로 묶습니다. 사진이 많을수록 처음 스캔에는 시간이 걸릴 수 있어요.' },
+    { anchor_id: 'home', title: '홈 — 오늘의 기억', badge: '', body: '홈 화면은 "오늘 같은 날"의 과거 사진(온 디스 데이)과, 전체 인생을 한눈에 보는 라이프 그리드를 보여줍니다. 매일 조금씩 다른 기억을 마주치게 되는 진입점이에요.' },
+    { anchor_id: 'timeline', title: '타임라인 · 갤러리', badge: '', body: '타임라인은 사진을 시간순으로, 갤러리는 격자형으로 훑어볼 수 있는 화면입니다. 사진 한 장을 눌러 날짜를 수정하거나 캡션을 남길 수 있어요.' },
+    { anchor_id: 'people', title: '인물', badge: '', body: '얼굴 인식으로 사진 속 인물들을 자동으로 그룹화합니다. 인물에 이름을 붙이고, 같은 사람인데 다른 그룹으로 나뉜 경우 병합할 수 있어요. 잘못 인식된 인물은 숨기기, 병합 제안 확인/거절 등으로 정리할 수 있습니다.' },
+    { anchor_id: 'chapters', title: '인생 챕터', badge: '', body: '연도별·인물별·사건별로 인생 챕터 초안을 AI가 자동으로 만들어줍니다. 챕터 상세 화면에서 내용을 직접 다듬거나(생성/다듬기), 원하는 사진을 골라 넣을 수 있고, 완성된 챕터는 PDF로 내보낼 수 있어요.' },
+    { anchor_id: 'preserve', title: '영구보존 & 외부공유', badge: '중요', body: '평소에는 원본 사진이 삭제되거나 외장하드가 빠지면 그 사진의 미리보기도 함께 보이지 않게 됩니다(저장공간을 이중으로 쓰지 않기 위한 기본 동작). 정말 소중한 챕터는 편집 화면에서 "영구보존 & 외부공유"를 눌러두면, 그 챕터의 사진만 별도로 안전하게 복사해둬서 원본이 사라져도 계속 볼 수 있어요.\n\n가족·지인에게 챕터를 공유하고 싶다면, 먼저 이 영구보존을 켠 뒤 Claude와의 대화에서 "이 챕터 공유해줘"라고 요청하면 공유 링크를 받아 챕터 화면에 등록할 수 있습니다.' },
+    { anchor_id: 'etc', title: '즐겨찾기 · 검색 · 휴지통', badge: '', body: '마음에 드는 사진은 즐겨찾기로 따로 모아볼 수 있고, 날짜·인물·키워드로 검색할 수 있어요. 실수로 지운 항목은 휴지통에서 복구할 수 있습니다.' },
+    { anchor_id: 'settings', title: '설정', badge: '', body: '연결된 폴더 관리, 위치 기록(방문 장소 자동 인식) 연동, 얼굴 인식 다시 실행 등을 설정 화면에서 할 수 있어요.' },
+    { anchor_id: 'mobile', title: '폰에서 사진 가져오기', badge: '준비 중', body: '폰으로 찍은 사진을 앱 설치 없이, 같은 와이파이 안에서 QR코드 스캔만으로 PC의 기억숲으로 옮기는 기능을 준비하고 있어요. 출시되면 이 페이지에도 사용법을 추가할게요.' },
+  ];
+
+  let sections = [];
+
+  async function load() {
+    const snap = await getDocs(query(collection(db, 'guides'), orderBy('order', 'asc')));
+    sections = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    seedBanner.style.display = sections.length === 0 ? 'block' : 'none';
+    render();
+  }
+
+  function render() {
+    if (sections.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-row">등록된 섹션이 없어요.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = sections
+      .map(
+        (s, i) => `
+      <tr>
+        <td>
+          ${i + 1}
+          <div style="display:inline-flex;gap:2px;margin-left:6px;">
+            <button class="btn btn-outline btn-sm" style="padding:2px 8px;" data-up="${s.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
+            <button class="btn btn-outline btn-sm" style="padding:2px 8px;" data-down="${s.id}" ${i === sections.length - 1 ? 'disabled' : ''}>↓</button>
+          </div>
+        </td>
+        <td>${escapeHtml(s.title)}</td>
+        <td class="muted">${escapeHtml(s.badge || '-')}</td>
+        <td class="muted">#${escapeHtml(s.anchor_id)}</td>
+        <td>${s.published === false ? '<span class="pill pill-muted">비공개</span>' : '<span class="pill pill-ok">공개중</span>'}</td>
+        <td>
+          <button class="btn btn-outline btn-sm" data-edit="${s.id}">수정</button>
+          <button class="btn btn-danger btn-sm" data-del="${s.id}">삭제</button>
+        </td>
+      </tr>`
+      )
+      .join('');
+
+    tbody.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => openEditor(b.getAttribute('data-edit'))));
+    tbody.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => removeSection(b.getAttribute('data-del'))));
+    tbody.querySelectorAll('[data-up]').forEach((b) => b.addEventListener('click', () => move(b.getAttribute('data-up'), -1)));
+    tbody.querySelectorAll('[data-down]').forEach((b) => b.addEventListener('click', () => move(b.getAttribute('data-down'), 1)));
+  }
+
+  async function move(id, dir) {
+    const idx = sections.findIndex((s) => s.id === id);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= sections.length) return;
+    const a = sections[idx];
+    const b = sections[swapIdx];
+    const aOrder = a.order;
+    const bOrder = b.order;
+    try {
+      await Promise.all([
+        updateDoc(doc(db, 'guides', a.id), { order: bOrder }),
+        updateDoc(doc(db, 'guides', b.id), { order: aOrder }),
+      ]);
+      await load();
+    } catch (e) {
+      toast('순서를 바꾸지 못했어요: ' + (e.message || e), true);
+    }
+  }
+
+  async function removeSection(id) {
+    const s = sections.find((x) => x.id === id);
+    if (!s) return;
+    openModal(`
+      <h3>섹션 삭제</h3>
+      <p>"${escapeHtml(s.title)}" 섹션을 삭제할까요? 공개 사이트에서도 바로 사라집니다.</p>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-danger" id="confirmBtn">삭제</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      try {
+        await deleteDoc(doc(db, 'guides', id));
+        closeModal();
+        toast('삭제했어요.');
+        await load();
+      } catch (e) {
+        toast('삭제하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  function openEditor(id) {
+    const s = id ? sections.find((x) => x.id === id) : null;
+    const isNew = !s;
+    openModal(`
+      <h3>${isNew ? '새 섹션' : '섹션 수정'}</h3>
+      <div class="form-field"><label>제목</label><input type="text" id="fTitle" value="${escapeHtml(s ? s.title : '')}"></div>
+      <div class="form-field"><label>앵커 ID (URL의 #뒤에 붙는 값, 영문/숫자/하이픈)</label><input type="text" id="fAnchor" value="${escapeHtml(s ? s.anchor_id : '')}" placeholder="예: new-feature"></div>
+      <div class="form-field"><label>배지 문구 (선택, 예: 중요 / 준비 중)</label><input type="text" id="fBadge" value="${escapeHtml(s ? s.badge || '' : '')}"></div>
+      <div class="form-field"><label>본문 (문단 사이는 빈 줄로 구분)</label><textarea id="fBody" rows="8">${escapeHtml(s ? s.body : '')}</textarea></div>
+      <div class="form-field">
+        <label><input type="checkbox" id="fPublished" ${!s || s.published !== false ? 'checked' : ''} style="width:auto;margin-right:6px;">공개 사이트에 노출</label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-outline" id="cancelBtn">취소</button>
+        <button class="btn btn-primary" id="saveBtn">저장</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', closeModal);
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const title = document.getElementById('fTitle').value.trim();
+      const anchor_id = document.getElementById('fAnchor').value.trim().replace(/[^a-zA-Z0-9-]/g, '-');
+      const badge = document.getElementById('fBadge').value.trim();
+      const body = document.getElementById('fBody').value.trim();
+      const published = document.getElementById('fPublished').checked;
+      if (!title || !anchor_id || !body) {
+        toast('제목, 앵커 ID, 본문은 꼭 채워주세요.', true);
+        return;
+      }
+      try {
+        if (isNew) {
+          const maxOrder = sections.reduce((m, x) => Math.max(m, x.order || 0), 0);
+          await addDoc(collection(db, 'guides'), {
+            title, anchor_id, badge, body, published, order: maxOrder + 1,
+            updated_at: new Date(), updated_by: uid,
+          });
+        } else {
+          await updateDoc(doc(db, 'guides', s.id), {
+            title, anchor_id, badge, body, published,
+            updated_at: new Date(), updated_by: uid,
+          });
+        }
+        closeModal();
+        toast('저장했어요.');
+        await load();
+      } catch (e) {
+        toast('저장하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  document.getElementById('addBtn').addEventListener('click', () => openEditor(null));
+  document.getElementById('seedBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('seedBtn');
+    btn.disabled = true;
+    btn.textContent = '불러오는 중...';
+    try {
+      await Promise.all(
+        SEED_SECTIONS.map((s, i) =>
+          addDoc(collection(db, 'guides'), { ...s, order: i + 1, published: true, updated_at: new Date(), updated_by: uid })
+        )
+      );
+      toast('9개 섹션을 불러왔어요.');
+      await load();
+    } catch (e) {
+      toast('불러오지 못했어요: ' + (e.message || e), true);
+      btn.disabled = false;
+      btn.textContent = '기존 콘텐츠 불러오기';
+    }
+  });
+
+  try {
+    await load();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+  }
+</script>
+
+</body>
+</html>
