@@ -101,7 +101,7 @@
       <h3>회원 상세</h3>
       <div class="form-field"><label>이름</label><input type="text" id="editName" value="${escapeHtml(u.name || '')}"></div>
       <div class="form-field"><label>이메일 (수정 불가)</label><input type="text" value="${escapeHtml(u.email || '')}" disabled></div>
-      <div class="form-field"><label>가입일 (수정 불가)</label><input type="text" value="${fmtDate(u.created_at)}" disabled></div>
+      <div class="form-field"><label>가입일 (수정 불가)</label><input type="text" value="${fmtDateTime(u.created_at)}" disabled></div>
       <div class="form-field">
         <label>구독 상태</label>
         <select id="editStatus">
