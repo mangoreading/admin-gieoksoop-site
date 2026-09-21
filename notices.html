@@ -114,13 +114,54 @@
     });
   }
 
+  // 기존에 일반 텍스트(문단 사이 빈 줄 구분)로 저장된 공지도 그대로 편집할 수 있도록,
+  // 본문에 HTML 태그가 없으면 문단 <p>로 변환해서 리치텍스트 박스에 넣어준다.
+  function bodyToEditableHtml(body) {
+    if (!body) return '';
+    if (/<[a-z][\s\S]*>/i.test(body)) return body;
+    return body
+      .split(/\n\s*\n/)
+      .map((p) => `<p>${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+      .join('');
+  }
+
+  // 관리자만 쓰는 화면이지만, 최소한의 안전장치로 script/스타일 태그와 on*, javascript: 를 제거한다.
+  function sanitizeRichHtml(html) {
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    div.querySelectorAll('script,style,iframe,object,embed,link,meta').forEach((el) => el.remove());
+    div.querySelectorAll('*').forEach((el) => {
+      [...el.attributes].forEach((attr) => {
+        const name = attr.name.toLowerCase();
+        if (name.startsWith('on')) el.removeAttribute(attr.name);
+        if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
+      });
+    });
+    return div.innerHTML.trim();
+  }
+
   function openEditor(id) {
     const n = id ? notices.find((x) => x.id === id) : null;
     const isNew = !n;
     openModal(`
       <h3>${isNew ? '새 공지사항' : '공지사항 수정'}</h3>
       <div class="form-field"><label>제목</label><input type="text" id="fTitle" value="${escapeHtml(n ? n.title : '')}"></div>
-      <div class="form-field"><label>내용 (문단 사이는 빈 줄로 구분)</label><textarea id="fBody" rows="7">${escapeHtml(n ? n.body : '')}</textarea></div>
+      <div class="form-field">
+        <label>내용</label>
+        <div class="richtext-toolbar" id="rtToolbar">
+          <button type="button" data-cmd="bold" title="굵게"><b>B</b></button>
+          <button type="button" data-cmd="italic" title="기울임"><i>I</i></button>
+          <button type="button" data-cmd="underline" title="밑줄"><u>U</u></button>
+          <span class="rt-sep"></span>
+          <button type="button" data-cmd="insertUnorderedList" title="글머리 기호 목록">• 목록</button>
+          <button type="button" data-cmd="insertOrderedList" title="번호 매기기 목록">1. 목록</button>
+          <span class="rt-sep"></span>
+          <button type="button" data-cmd="createLink" title="링크 삽입">🔗 링크</button>
+          <button type="button" data-cmd="removeFormat" title="서식 지우기">서식 지우기</button>
+        </div>
+        <div id="fBody" class="richtext-box large" contenteditable="true">${bodyToEditableHtml(n ? n.body : '')}</div>
+        <p class="form-hint">텍스트를 선택한 뒤 위 버튼으로 굵게/목록/링크 등을 적용할 수 있어요.</p>
+      </div>
       <div class="form-field">
         <label><input type="checkbox" id="fPinned" ${n && n.pinned ? 'checked' : ''} style="width:auto;margin-right:6px;">상단 고정</label>
       </div>
@@ -131,14 +172,32 @@
         <button class="btn btn-outline" id="cancelBtn">취소</button>
         <button class="btn btn-primary" id="saveBtn">저장</button>
       </div>
-    `);
+    `, { size: 'lg' });
+
+    document.querySelectorAll('#rtToolbar [data-cmd]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const bodyEl = document.getElementById('fBody');
+        bodyEl.focus();
+        const cmd = btn.getAttribute('data-cmd');
+        if (cmd === 'createLink') {
+          const url = window.prompt('연결할 링크 주소(URL)를 입력하세요:', 'https://');
+          if (!url) return;
+          document.execCommand('createLink', false, url);
+        } else {
+          document.execCommand(cmd, false, null);
+        }
+      });
+    });
+
     document.getElementById('cancelBtn').addEventListener('click', closeModal);
     document.getElementById('saveBtn').addEventListener('click', async () => {
       const title = document.getElementById('fTitle').value.trim();
-      const body = document.getElementById('fBody').value.trim();
+      const bodyEl = document.getElementById('fBody');
+      const hasText = bodyEl.textContent.trim().length > 0;
+      const body = sanitizeRichHtml(bodyEl.innerHTML);
       const pinned = document.getElementById('fPinned').checked;
       const published = document.getElementById('fPublished').checked;
-      if (!title || !body) {
+      if (!title || !hasText) {
         toast('제목과 내용을 입력해 주세요.', true);
         return;
       }

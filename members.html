@@ -15,13 +15,16 @@
 
 <script type="module">
   import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
-  import { collection, getDocs, doc, updateDoc } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+  import {
+    collection, getDocs, doc, updateDoc, addDoc, deleteDoc, query, where,
+  } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-  await guardAdminPage({
+  const { user: adminUser } = await guardAdminPage({
     activeKey: 'members',
     title: '회원관리',
     desc: '가입한 회원 목록을 확인하고, 필요하면 구독 상태를 수동으로 조정할 수 있어요.',
   });
+  const adminLabel = adminUser.email || adminUser.uid;
 
   const content = document.getElementById('adminContent');
   content.innerHTML = `
@@ -34,8 +37,8 @@
       </div>
       <div style="overflow-x:auto;">
         <table class="data-table">
-          <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th><th>플랜</th><th></th></tr></thead>
-          <tbody id="tbody"><tr><td colspan="6" class="empty-row">불러오는 중...</td></tr></tbody>
+          <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th><th>플랜</th><th>계정상태</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="7" class="empty-row">불러오는 중...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -62,7 +65,7 @@
   function render(list) {
     countLabel.textContent = `${list.length.toLocaleString()}명`;
     if (list.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="empty-row">검색 결과가 없어요.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="empty-row">검색 결과가 없어요.</td></tr>`;
       return;
     }
     tbody.innerHTML = list
@@ -74,6 +77,7 @@
         <td class="muted">${fmtDate(u.created_at)}</td>
         <td>${statusPill(u.subscription_status)}</td>
         <td class="muted">${escapeHtml(u.subscription_plan || '-')}</td>
+        <td>${u.suspended ? '<span class="pill pill-danger">일시중지</span>' : '<span class="pill pill-ok">정상</span>'}</td>
         <td><button class="btn btn-outline btn-sm" data-detail="${u.id}">상세</button></td>
       </tr>`
       )
@@ -82,6 +86,12 @@
     tbody.querySelectorAll('[data-detail]').forEach((btn) => {
       btn.addEventListener('click', () => openDetail(btn.getAttribute('data-detail')));
     });
+  }
+
+  function fmtDateTime(ts) {
+    if (!ts || !ts.toDate) return '-';
+    const d = ts.toDate();
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
 
   function openDetail(uid) {
@@ -103,11 +113,36 @@
       </div>
       <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
       <p class="form-hint">uid: ${escapeHtml(u.id)}</p>
+
+      <div class="form-field" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
+        <label>계정 상태</label>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          ${u.suspended ? '<span class="pill pill-danger">일시중지됨</span>' : '<span class="pill pill-ok">정상 이용중</span>'}
+          <button type="button" class="btn ${u.suspended ? 'btn-outline' : 'btn-danger'} btn-sm" id="suspendBtn">${u.suspended ? '일시중지 해제' : '서비스 일시중지'}</button>
+        </div>
+        ${u.suspended && u.suspended_at ? `<p class="form-hint">${fmtDateTime(u.suspended_at)} 정지${u.suspended_by ? ' · 처리자: ' + escapeHtml(u.suspended_by) : ''}</p>` : ''}
+        ${u.suspend_note ? `<p class="form-hint">메모: ${escapeHtml(u.suspend_note)}</p>` : ''}
+        <p class="form-hint">명의도용, 불합리한 민원 등이 확인됐을 때 서비스 이용을 강제로 정지시켜요. 실제 로그인 차단은 앱/서버 쪽에서 이 값(suspended)을 확인하도록 연동돼 있어야 동작해요.</p>
+      </div>
+
+      <div class="form-field" style="border-top:1px solid var(--border);padding-top:16px;">
+        <label>유료 결제내역</label>
+        <div style="overflow-x:auto;">
+          <table class="data-table" style="font-size:13px;">
+            <thead><tr><th>결제일</th><th>금액</th><th>플랜</th><th>방법</th><th>상태</th><th></th></tr></thead>
+            <tbody id="paymentsTbody"><tr><td colspan="6" class="empty-row">불러오는 중...</td></tr></tbody>
+          </table>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" id="addPaymentBtn" style="margin-top:10px;">+ 결제 내역 수동 등록</button>
+        <p class="form-hint">PortOne 연동 전까지, 계좌이체 등으로 직접 확인한 결제를 여기에 기록해두면 이 회원의 결제 history로 계속 쌓여요.</p>
+      </div>
+
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
         <button type="button" class="btn btn-primary" id="saveBtn">저장</button>
       </div>
-    `);
+    `, { size: 'lg' });
+
     document.getElementById('cancelBtn').addEventListener('click', closeModal);
     document.getElementById('saveBtn').addEventListener('click', async () => {
       const name = document.getElementById('editName').value.trim();
@@ -123,6 +158,171 @@
         render(filterList(searchInput.value));
       } catch (e) {
         toast('저장하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+
+    document.getElementById('suspendBtn').addEventListener('click', () => {
+      if (u.suspended) openResumeConfirm(u);
+      else openSuspendConfirm(u);
+    });
+    document.getElementById('addPaymentBtn').addEventListener('click', () => openPaymentEditor(u));
+    loadPayments(uid);
+  }
+
+  function openSuspendConfirm(u) {
+    openModal(`
+      <h3>서비스 일시중지</h3>
+      <p>"${escapeHtml(u.name || u.email)}"님의 서비스 이용을 일시중지할까요? 정지 중에는 로그인/동기화가 제한돼요.</p>
+      <div class="form-field"><label>정지 사유 메모</label><textarea id="fSuspendNote" rows="3" placeholder="예: 명의도용 의심 신고 접수, 확인 중">${escapeHtml(u.suspend_note || '')}</textarea></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+        <button type="button" class="btn btn-danger" id="confirmBtn">일시중지</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', () => openDetail(u.id));
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      const suspend_note = document.getElementById('fSuspendNote').value.trim();
+      try {
+        await updateDoc(doc(db, 'users', u.id), {
+          suspended: true, suspend_note, suspended_at: new Date(), suspended_by: adminLabel,
+        });
+        u.suspended = true;
+        u.suspend_note = suspend_note;
+        u.suspended_at = { toDate: () => new Date() };
+        u.suspended_by = adminLabel;
+        toast('서비스를 일시중지했어요.');
+        render(filterList(searchInput.value));
+        openDetail(u.id);
+      } catch (e) {
+        toast('처리하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  function openResumeConfirm(u) {
+    openModal(`
+      <h3>일시중지 해제</h3>
+      <p>"${escapeHtml(u.name || u.email)}"님의 서비스 일시중지를 해제할까요?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+        <button type="button" class="btn btn-primary" id="confirmBtn">해제</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', () => openDetail(u.id));
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      try {
+        await updateDoc(doc(db, 'users', u.id), {
+          suspended: false, suspended_resumed_at: new Date(), suspended_resumed_by: adminLabel,
+        });
+        u.suspended = false;
+        toast('일시중지를 해제했어요.');
+        render(filterList(searchInput.value));
+        openDetail(u.id);
+      } catch (e) {
+        toast('처리하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  async function loadPayments(uid) {
+    const tb = document.getElementById('paymentsTbody');
+    if (!tb) return;
+    try {
+      const snap = await getDocs(query(collection(db, 'payments'), where('uid', '==', uid)));
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      list.sort((a, b) => {
+        const ta = a.paid_at && a.paid_at.toDate ? a.paid_at.toDate().getTime() : 0;
+        const tb2 = b.paid_at && b.paid_at.toDate ? b.paid_at.toDate().getTime() : 0;
+        return tb2 - ta;
+      });
+      if (list.length === 0) {
+        tb.innerHTML = `<tr><td colspan="6" class="empty-row">등록된 결제내역이 없어요.</td></tr>`;
+        return;
+      }
+      tb.innerHTML = list
+        .map(
+          (p) => `
+        <tr>
+          <td class="muted">${fmtDate(p.paid_at)}</td>
+          <td>${Number(p.amount || 0).toLocaleString()}원</td>
+          <td class="muted">${escapeHtml(p.plan || '-')}</td>
+          <td class="muted">${escapeHtml(p.method || '-')}</td>
+          <td>${p.status === 'refunded' ? '<span class="pill pill-danger">환불</span>' : '<span class="pill pill-ok">완료</span>'}</td>
+          <td><button type="button" class="btn btn-outline btn-sm" data-delpay="${p.id}">삭제</button></td>
+        </tr>`
+        )
+        .join('');
+      tb.querySelectorAll('[data-delpay]').forEach((btn) => {
+        btn.addEventListener('click', () => removePayment(uid, btn.getAttribute('data-delpay')));
+      });
+    } catch (e) {
+      tb.innerHTML = `<tr><td colspan="6" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+    }
+  }
+
+  function openPaymentEditor(u) {
+    const today = new Date().toISOString().slice(0, 10);
+    openModal(`
+      <h3>결제 내역 수동 등록</h3>
+      <p class="form-hint">계좌이체 등으로 직접 확인한 결제를 기록으로 남겨요. PortOne 연동 전까지 사용해 주세요.</p>
+      <div class="form-field"><label>결제일</label><input type="date" id="fPaidAt" value="${today}"></div>
+      <div class="form-field"><label>금액 (원)</label><input type="number" id="fAmount" placeholder="예: 3000"></div>
+      <div class="form-field"><label>플랜</label><input type="text" id="fPlan" placeholder="예: monthly / annual_2026"></div>
+      <div class="form-field">
+        <label>결제 방법</label>
+        <select id="fMethod">
+          <option value="계좌이체">계좌이체</option>
+          <option value="카드">카드</option>
+          <option value="기타">기타</option>
+        </select>
+      </div>
+      <div class="form-field"><label>메모 (선택)</label><input type="text" id="fMemo" placeholder="선택 입력"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+        <button type="button" class="btn btn-primary" id="saveBtn">등록</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', () => openDetail(u.id));
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const paidAtVal = document.getElementById('fPaidAt').value;
+      const amount = Number(document.getElementById('fAmount').value);
+      const plan = document.getElementById('fPlan').value.trim();
+      const method = document.getElementById('fMethod').value;
+      const memo = document.getElementById('fMemo').value.trim();
+      if (!paidAtVal || !amount) {
+        toast('결제일과 금액을 입력해 주세요.', true);
+        return;
+      }
+      try {
+        await addDoc(collection(db, 'payments'), {
+          uid: u.id, amount, plan: plan || null, method, memo: memo || null, status: 'paid',
+          paid_at: new Date(paidAtVal), created_at: new Date(), created_by: adminLabel,
+        });
+        toast('결제내역을 등록했어요.');
+        openDetail(u.id);
+      } catch (e) {
+        toast('등록하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+  }
+
+  function removePayment(uid, paymentId) {
+    openModal(`
+      <h3>결제내역 삭제</h3>
+      <p>이 결제 기록을 삭제할까요? 이 작업은 되돌릴 수 없어요.</p>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+        <button type="button" class="btn btn-danger" id="confirmBtn">삭제</button>
+      </div>
+    `);
+    document.getElementById('cancelBtn').addEventListener('click', () => openDetail(uid));
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      try {
+        await deleteDoc(doc(db, 'payments', paymentId));
+        toast('삭제했어요.');
+        openDetail(uid);
+      } catch (e) {
+        toast('삭제하지 못했어요: ' + (e.message || e), true);
       }
     });
   }
@@ -148,7 +348,7 @@
       });
     render(allUsers);
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
   }
 </script>
 

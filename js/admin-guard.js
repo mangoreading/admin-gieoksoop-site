@@ -106,14 +106,19 @@ export function toast(msg, isError = false) {
   }, 3200);
 }
 
-export function openModal(html) {
-  document.getElementById("adminModal").innerHTML = html;
+// opts.size === 'lg' 이면 더 넓고 긴 모달(가이드/공지사항 본문 편집처럼 내용이 긴 폼용)을 사용한다.
+export function openModal(html, opts = {}) {
+  const modal = document.getElementById("adminModal");
+  modal.innerHTML = html;
+  modal.className = "modal" + (opts.size === "lg" ? " modal-lg" : "");
   document.getElementById("adminModalOverlay").classList.add("open");
 }
 
 export function closeModal() {
   document.getElementById("adminModalOverlay").classList.remove("open");
-  document.getElementById("adminModal").innerHTML = "";
+  const modal = document.getElementById("adminModal");
+  modal.innerHTML = "";
+  modal.className = "modal";
 }
 
 export function escapeHtml(str) {

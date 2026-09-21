@@ -158,8 +158,38 @@ h1,h2,h3{color:var(--navy);}
 }
 .modal-overlay.open{display:flex;}
 .modal{background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow);max-width:520px;width:100%;max-height:88vh;overflow-y:auto;padding:28px;}
+.modal.modal-lg{max-width:920px;max-height:92vh;}
 .modal h3{margin:0 0 18px;font-size:18px;}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;}
+
+/* 본문이 긴 폼(가이드/공지사항 편집)에서 쓰는 넉넉한 텍스트영역 */
+.form-field textarea.large{min-height:360px;}
+
+/* ---------- 드래그 정렬 가능한 목록 행 ---------- */
+.data-table tr[draggable="true"]{cursor:grab;}
+.data-table tr.dragging{opacity:.4;}
+.data-table tr.drag-over{box-shadow:inset 0 2px 0 var(--accent);}
+.drag-handle{display:inline-block;color:var(--ink-faint);margin-right:8px;cursor:grab;font-size:15px;letter-spacing:-1px;}
+.drag-handle:active{cursor:grabbing;}
+
+/* ---------- 공지사항 등 본문용 기본 리치텍스트 에디터 ---------- */
+.richtext-toolbar{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:6px;}
+.richtext-toolbar button{
+  background:var(--paper);border:1.5px solid var(--border);border-radius:8px;
+  padding:6px 10px;font-size:13px;font-family:var(--font);color:var(--ink-dim);cursor:pointer;
+}
+.richtext-toolbar button:hover{border-color:var(--accent);color:var(--ink);}
+.richtext-toolbar .rt-sep{width:1px;align-self:stretch;background:var(--border);margin:2px 4px;}
+.richtext-box{
+  width:100%;min-height:220px;padding:12px 14px;border:1.5px solid var(--border);border-radius:10px;
+  background:var(--paper);color:var(--ink);font-family:var(--font);font-size:14.5px;line-height:1.7;
+  overflow-y:auto;
+}
+.richtext-box.large{min-height:360px;}
+.richtext-box:focus{outline:2px solid var(--accent);outline-offset:1px;}
+.richtext-box p{margin:0 0 10px;}
+.richtext-box ul,.richtext-box ol{margin:0 0 10px;padding-left:22px;}
+.richtext-box a{color:var(--blue);}
 
 /* ---------- 토스트 ---------- */
 .toast{
