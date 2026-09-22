@@ -109,7 +109,7 @@
           <option value="active" ${u.subscription_status === 'active' ? 'selected' : ''}>구독중 (active)</option>
           <option value="canceled" ${u.subscription_status === 'canceled' ? 'selected' : ''}>해지 (canceled)</option>
         </select>
-        <p class="form-hint">결제 연동 전이라, 계좌이체 등으로 수동 결제를 확인했을 때만 여기서 직접 바꿔주세요.</p>
+        <p class="form-hint">보통은 결제(카드)에 따라 자동으로 바뀌어요. 계좌이체 등 예외적으로 수동 결제를 확인했을 때만 여기서 직접 바꿔주세요.</p>
       </div>
       <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
       <p class="form-hint">uid: ${escapeHtml(u.id)}</p>
@@ -134,7 +134,7 @@
           </table>
         </div>
         <button type="button" class="btn btn-outline btn-sm" id="addPaymentBtn" style="margin-top:10px;">+ 결제 내역 수동 등록</button>
-        <p class="form-hint">PortOne 연동 전까지, 계좌이체 등으로 직접 확인한 결제를 여기에 기록해두면 이 회원의 결제 history로 계속 쌓여요.</p>
+        <p class="form-hint">대부분의 결제는 포트원(카드)으로 자동 기록돼요. 계좌이체 등 예외적으로 직접 확인한 결제만 여기서 수동으로 기록해두면 이 회원의 결제 history로 함께 쌓여요.</p>
       </div>
 
       <div class="modal-actions">
@@ -264,7 +264,7 @@
     const today = new Date().toISOString().slice(0, 10);
     openModal(`
       <h3>결제 내역 수동 등록</h3>
-      <p class="form-hint">계좌이체 등으로 직접 확인한 결제를 기록으로 남겨요. PortOne 연동 전까지 사용해 주세요.</p>
+      <p class="form-hint">계좌이체 등으로 직접 확인한 결제를 기록으로 남겨요(카드 결제는 포트원으로 자동 기록되니 예외적인 경우에만 사용해 주세요).</p>
       <div class="form-field"><label>결제일</label><input type="date" id="fPaidAt" value="${today}"></div>
       <div class="form-field"><label>금액 (원)</label><input type="number" id="fAmount" placeholder="예: 3000"></div>
       <div class="form-field"><label>플랜</label><input type="text" id="fPlan" placeholder="예: monthly / annual_2026"></div>
