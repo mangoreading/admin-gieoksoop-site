@@ -37,8 +37,8 @@
       </div>
       <div style="overflow-x:auto;">
         <table class="data-table">
-          <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th><th>플랜</th><th>계정상태</th><th></th></tr></thead>
-          <tbody id="tbody"><tr><td colspan="7" class="empty-row">불러오는 중...</td></tr></tbody>
+          <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th><th>플랜</th><th>다음 결제일</th><th>계정상태</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="8" class="empty-row">불러오는 중...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -65,7 +65,7 @@
   function render(list) {
     countLabel.textContent = `${list.length.toLocaleString()}명`;
     if (list.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" class="empty-row">검색 결과가 없어요.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-row">검색 결과가 없어요.</td></tr>`;
       return;
     }
     tbody.innerHTML = list
@@ -77,6 +77,7 @@
         <td class="muted">${fmtDate(u.created_at)}</td>
         <td>${statusPill(u.subscription_status)}</td>
         <td class="muted">${escapeHtml(u.subscription_plan || '-')}</td>
+        <td class="muted">${u.next_billing_at ? fmtDate(u.next_billing_at) : '-'}</td>
         <td>${u.suspended ? '<span class="pill pill-danger">일시중지</span>' : '<span class="pill pill-ok">정상</span>'}</td>
         <td><button class="btn btn-outline btn-sm" data-detail="${u.id}">상세</button></td>
       </tr>`
@@ -113,6 +114,7 @@
       </div>
       <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
       <div class="form-field"><label>등록된 카드</label><input type="text" value="${u.card_number ? escapeHtml(((u.card_name || '') + ' ' + u.card_number).trim()) : '등록된 카드 없음'}" disabled></div>
+      <div class="form-field"><label>구독기간</label><input type="text" value="${u.next_billing_at ? escapeHtml((u.billing_key_issued_at ? fmtDate(u.billing_key_issued_at) + ' ~ ' : '') + '다음 결제일 ' + fmtDate(u.next_billing_at)) : '-'}" disabled></div>
       <p class="form-hint">uid: ${escapeHtml(u.id)}</p>
 
       <div class="form-field" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
