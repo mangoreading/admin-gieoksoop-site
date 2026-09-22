@@ -112,6 +112,7 @@
         <p class="form-hint">보통은 결제(카드)에 따라 자동으로 바뀌어요. 계좌이체 등 예외적으로 수동 결제를 확인했을 때만 여기서 직접 바꿔주세요.</p>
       </div>
       <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
+      <div class="form-field"><label>등록된 카드</label><input type="text" value="${u.card_number ? escapeHtml(((u.card_name || '') + ' ' + u.card_number).trim()) : '등록된 카드 없음'}" disabled></div>
       <p class="form-hint">uid: ${escapeHtml(u.id)}</p>
 
       <div class="form-field" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">

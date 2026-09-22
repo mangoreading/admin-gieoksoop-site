@@ -148,7 +148,7 @@
         <td>${escapeHtml(u.name || '(탈퇴/알 수 없음)')}<br><span class="muted" style="font-size:12px;">${escapeHtml(u.email || p.uid || '-')}</span></td>
         <td>${planLabel(p.plan)}</td>
         <td>${Number(p.amount || 0).toLocaleString()}원</td>
-        <td class="muted">${escapeHtml(p.method || '-')}</td>
+        <td class="muted">${escapeHtml(p.method || '-')}${p.card_number ? '<br><span style="font-size:12px;">' + escapeHtml((p.card_name || '') + ' ' + p.card_number).trim() + '</span>' : ''}</td>
         <td>${statusPill(p.status)}</td>
         <td class="muted" style="font-size:12px;">${escapeHtml(p.payment_id || '-')}</td>
         <td class="muted" style="font-size:12px;">${sourceLabel(p.created_by)}</td>
