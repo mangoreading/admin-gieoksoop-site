@@ -247,7 +247,7 @@
           <td>${Number(p.amount || 0).toLocaleString()}원</td>
           <td class="muted">${escapeHtml(p.plan || '-')}</td>
           <td class="muted">${escapeHtml(p.method || '-')}</td>
-          <td>${p.status === 'refunded' ? '<span class="pill pill-danger">환불</span>' : '<span class="pill pill-ok">완료</span>'}</td>
+          <td>${p.status === 'refunded' ? '<span class="pill pill-danger">환불</span>' : p.status === 'failed' ? '<span class="pill pill-danger">실패</span>' : '<span class="pill pill-ok">완료</span>'}</td>
           <td><button type="button" class="btn btn-outline btn-sm" data-delpay="${p.id}">삭제</button></td>
         </tr>`
         )
