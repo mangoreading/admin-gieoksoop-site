@@ -14,40 +14,152 @@
 <div class="admin-shell" id="adminRoot"></div>
 
 <script type="module">
-  import { guardAdminPage } from './js/admin-guard.js';
+  import { guardAdminPage, db, escapeHtml } from './js/admin-guard.js';
+  import { collection, getDocs } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
   await guardAdminPage({
     activeKey: 'payments',
     title: '구독결제 관리',
-    desc: 'PortOne(포트원) 연동 전까지는 준비 화면만 표시돼요.',
+    desc: '포트원(PortOne)으로 처리된 구독 결제 내역과 매출 현황을 확인할 수 있어요.',
   });
 
-  document.getElementById('adminContent').innerHTML = `
-    <div class="panel">
-      <div class="panel-body" style="text-align:center;padding:56px 24px;">
-        <div style="font-size:15px;color:var(--ink-dim);margin-bottom:8px;">🚧 아직 준비 중이에요</div>
-        <h2 style="margin:0 0 10px;">구독결제 관리는 PortOne 연동 이후 열립니다</h2>
-        <p style="color:var(--ink-dim);font-size:14px;max-width:480px;margin:0 auto;">
-          통신판매업 신고, PG사 가맹점 계약, PortOne API 키 발급이 끝나야 실제 결제 내역이 쌓여요.
-          그 전까지 회원의 구독 상태를 수동으로 바꿔야 한다면 <a href="members.html">회원관리</a> 화면의 상세보기에서
-          "구독 상태"를 직접 조정할 수 있습니다(계좌이체 등으로 결제를 직접 확인했을 때만 사용).
-        </p>
-      </div>
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `<p class="muted">불러오는 중...</p>`;
+
+  function fmtDateTime(ts) {
+    if (!ts || !ts.toDate) return '-';
+    const d = ts.toDate();
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  }
+
+  function statusPill(status) {
+    if (status === 'refunded') return '<span class="pill pill-danger">환불</span>';
+    if (status === 'failed') return '<span class="pill pill-danger">실패</span>';
+    return '<span class="pill pill-ok">완료</span>';
+  }
+
+  function planLabel(plan) {
+    if (plan === 'monthly') return '월간';
+    if (plan === 'annual') return '연간';
+    return plan || '-';
+  }
+
+  function sourceLabel(createdBy) {
+    if (createdBy === 'portone-cron') return '자동 재결제';
+    if (createdBy === 'portone') return '최초 결제';
+    return createdBy ? escapeHtml(createdBy) : '수동 등록';
+  }
+
+  let payments = [];
+  let usersById = {};
+
+  try {
+    const [paymentsSnap, usersSnap] = await Promise.all([
+      getDocs(collection(db, 'payments')),
+      getDocs(collection(db, 'users')),
+    ]);
+
+    usersById = Object.fromEntries(usersSnap.docs.map((d) => [d.id, d.data()]));
+    payments = paymentsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    payments.sort((a, b) => {
+      const ta = (a.paid_at && a.paid_at.toDate ? a.paid_at.toDate() : (a.created_at && a.created_at.toDate ? a.created_at.toDate() : new Date(0))).getTime();
+      const tb = (b.paid_at && b.paid_at.toDate ? b.paid_at.toDate() : (b.created_at && b.created_at.toDate ? b.created_at.toDate() : new Date(0))).getTime();
+      return tb - ta;
+    });
+  } catch (e) {
+    content.innerHTML = `<p class="muted">결제내역을 불러오지 못했어요: ${escapeHtml(e.message || String(e))}</p>`;
+    throw e;
+  }
+
+  // ---- 요약 통계 ----
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+  const paidThisMonth = payments.filter(
+    (p) => p.status === 'paid' && p.paid_at && p.paid_at.toDate && p.paid_at.toDate().getTime() >= monthStart
+  );
+  const revenueThisMonth = paidThisMonth.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const failedThisMonth = payments.filter(
+    (p) => p.status === 'failed' && p.created_at && p.created_at.toDate && p.created_at.toDate().getTime() >= monthStart
+  ).length;
+
+  const activeUsers = Object.values(usersById).filter((u) => u.subscription_status === 'active');
+  const monthlySubs = activeUsers.filter((u) => u.subscription_plan === 'monthly').length;
+  const annualSubs = activeUsers.filter((u) => u.subscription_plan === 'annual').length;
+
+  content.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat-card"><div class="num">${revenueThisMonth.toLocaleString()}원</div><div class="label">이번 달 매출(완료 기준)</div></div>
+      <div class="stat-card"><div class="num">${activeUsers.length.toLocaleString()}명</div><div class="label">활성 구독자 (월간 ${monthlySubs} · 연간 ${annualSubs})</div></div>
+      <div class="stat-card"><div class="num">${payments.length.toLocaleString()}건</div><div class="label">전체 결제 기록</div></div>
+      <div class="stat-card"><div class="num">${failedThisMonth.toLocaleString()}건</div><div class="label">이번 달 결제 실패</div></div>
     </div>
 
     <div class="panel">
-      <div class="panel-head"><div><h2>연동 후 이 화면이 다룰 내용 (메모)</h2><p>결제 연동 시점에 참고할 최소 스펙 초안이에요.</p></div></div>
-      <div class="panel-body">
-        <ul style="margin:0;padding-left:20px;color:var(--ink-dim);font-size:14px;line-height:1.9;">
-          <li>결제 내역 목록: 회원, 결제일시, 금액, 플랜, 상태(성공/실패/환불), PortOne 거래 ID</li>
-          <li>정기결제(빌링키) 다음 결제 예정일, 실패 시 재시도 이력</li>
-          <li>환불 처리 버튼(부분/전액) 및 사유 기록</li>
-          <li>매출 요약(일/월별), 플랜별 구독자 수 추이</li>
-          <li>결제 실패·카드 만료 임박 회원에게 보낼 알림 목록</li>
-        </ul>
+      <div class="panel-head">
+        <div class="toolbar">
+          <input type="search" id="searchInput" placeholder="이름 또는 이메일로 검색">
+          <select id="statusFilter">
+            <option value="">전체 상태</option>
+            <option value="paid">완료</option>
+            <option value="refunded">환불</option>
+            <option value="failed">실패</option>
+          </select>
+        </div>
+        <span class="muted" id="countLabel"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>결제일시</th><th>회원</th><th>플랜</th><th>금액</th><th>방법</th><th>상태</th><th>거래 ID</th><th>구분</th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="8" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
       </div>
     </div>
+
+    <p class="muted" style="font-size:13px;">환불 처리, 결제 실패 재시도, 카드 만료 임박 알림은 아직 없어요 — 지금은 조회 전용 화면이에요. 결제 상태를 직접 조정해야 하면 <a href="members.html">회원관리</a>의 회원 상세에서 결제내역을 수동으로 등록/삭제할 수 있어요.</p>
   `;
+
+  const tbody = document.getElementById('tbody');
+  const countLabel = document.getElementById('countLabel');
+  const searchInput = document.getElementById('searchInput');
+  const statusFilter = document.getElementById('statusFilter');
+
+  function render() {
+    const q = searchInput.value.trim().toLowerCase();
+    const statusQ = statusFilter.value;
+    const list = payments.filter((p) => {
+      const status = p.status || 'paid';
+      if (statusQ && status !== statusQ) return false;
+      if (!q) return true;
+      const u = usersById[p.uid] || {};
+      return (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+    });
+    countLabel.textContent = `${list.length.toLocaleString()}건`;
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="empty-row">결제 기록이 없어요.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list
+      .map((p) => {
+        const u = usersById[p.uid] || {};
+        return `
+      <tr>
+        <td class="muted">${fmtDateTime(p.paid_at || p.created_at)}</td>
+        <td>${escapeHtml(u.name || '(탈퇴/알 수 없음)')}<br><span class="muted" style="font-size:12px;">${escapeHtml(u.email || p.uid || '-')}</span></td>
+        <td>${planLabel(p.plan)}</td>
+        <td>${Number(p.amount || 0).toLocaleString()}원</td>
+        <td class="muted">${escapeHtml(p.method || '-')}</td>
+        <td>${statusPill(p.status)}</td>
+        <td class="muted" style="font-size:12px;">${escapeHtml(p.payment_id || '-')}</td>
+        <td class="muted" style="font-size:12px;">${sourceLabel(p.created_by)}</td>
+      </tr>`;
+      })
+      .join('');
+  }
+
+  searchInput.addEventListener('input', render);
+  statusFilter.addEventListener('change', render);
+  render();
 </script>
 
 </body>
