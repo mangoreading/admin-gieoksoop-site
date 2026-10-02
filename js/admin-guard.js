@@ -67,6 +67,8 @@ const ICON_NOTICES =
   '<svg viewBox="0 0 24 24"><path d="M3 10v4a1 1 0 0 0 1 1h2l5.3 4V5L6 9H4a1 1 0 0 0-1 1Z"/><path d="M14.5 8.7a4 4 0 0 1 0 6.6"/><path d="M17.5 6.3a7.6 7.6 0 0 1 0 11.4"/></svg>';
 const ICON_ADMINS =
   '<svg viewBox="0 0 24 24"><path d="M12 3.5 5.3 6v5.3c0 4.5 2.9 7.8 6.7 8.9 3.8-1.1 6.7-4.4 6.7-8.9V6Z"/><path d="m9.2 12 2 2 3.6-4"/></svg>';
+const ICON_ERRORS =
+  '<svg viewBox="0 0 24 24"><path d="M12 3.2 3 19.5h18L12 3.2Z"/><path d="M12 9.6v4.4"/><circle cx="12" cy="16.7" r="0.95" fill="currentColor" stroke="none"/></svg>';
 const ICON_SETTINGS =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.03a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.03a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.03a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>';
 
@@ -77,6 +79,7 @@ const NAV_ITEMS = [
   { key: "payments", href: "payments.html", label: "구독결제 관리", icon: ICON_PAYMENTS },
   { key: "guides", href: "guides.html", label: "사용가이드 관리", icon: ICON_GUIDES },
   { key: "notices", href: "notices.html", label: "공지사항 관리", icon: ICON_NOTICES },
+  { key: "error_reports", href: "error-reports.html", label: "오류 로그", icon: ICON_ERRORS },
   { key: "admins", href: "admins.html", label: "관리자 계정", icon: ICON_ADMINS, superadminOnly: true },
   { key: "settings", href: "settings.html", label: "시스템 설정", icon: ICON_SETTINGS, superadminOnly: true },
 ];

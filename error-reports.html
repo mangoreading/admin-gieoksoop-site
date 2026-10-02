@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오류 로그 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, escapeHtml } from './js/admin-guard.js';
+
+  // PC 앱(error_reporting.py)이 올리는 익명 오류 리포트를 gieoksoop-pilot Worker를 통해
+  // 조회한다 — Firestore가 아니라 D1에 쌓이므로(2026.10.01 하드닝), 다른 admin 페이지와
+  // 달리 fetch로 가져온다. 서버 쪽 값과 반드시 같아야 함: ADMIN_REPORT_KEY.
+  const PILOT_BASE_URL = 'https://gieoksoop-pilot.mangoreading-it.workers.dev';
+  const ADMIN_REPORT_KEY = '186836123d5218539d3655eec43950169350bb66c505e827';
+
+  await guardAdminPage({
+    activeKey: 'error_reports',
+    title: '오류 로그',
+    desc: 'PC 앱에서 올라온 익명 오류 리포트 — 최근 7일 집계 + 최신 순 목록. 개인을 특정하지 않아요.',
+  });
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div class="stat-grid" id="summaryGrid"><div class="stat-card"><div class="num">-</div><div class="label">불러오는 중...</div></div></div>
+    <div class="panel">
+      <div class="panel-head">
+        <div class="toolbar">
+          <select id="typeFilter"><option value="">모든 유형</option></select>
+          <button type="button" class="btn btn-outline btn-sm" id="refreshBtn">새로고침</button>
+        </div>
+        <span class="muted" id="countLabel"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>시각(UTC)</th><th>유형</th><th>메시지</th><th>맥락</th><th>버전/OS</th><th>설치본</th></tr></thead>
+          <tbody id="reportTbody"><tr><td colspan="6" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="panel-body" style="display:flex;justify-content:center;padding-top:4px;">
+        <button type="button" class="btn btn-outline btn-sm" id="loadMoreBtn" style="display:none;">더 보기</button>
+      </div>
+    </div>
+  `;
+
+  const summaryGrid = document.getElementById('summaryGrid');
+  const tbody = document.getElementById('reportTbody');
+  const countLabel = document.getElementById('countLabel');
+  const typeFilter = document.getElementById('typeFilter');
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+
+  let cursorBefore = null;
+  let currentType = '';
+  let totalSeen = 0;
+
+  async function fetchReports({ reset = false } = {}) {
+    const url = new URL(`${PILOT_BASE_URL}/admin/error-reports`);
+    url.searchParams.set('limit', '100');
+    if (currentType) url.searchParams.set('error_type', currentType);
+    if (!reset && cursorBefore) url.searchParams.set('before', cursorBefore);
+    const res = await fetch(url, { headers: { 'X-Admin-Report-Key': ADMIN_REPORT_KEY } });
+    if (!res.ok) throw new Error(`서버 응답 ${res.status}`);
+    return res.json();
+  }
+
+  function renderSummary(summary) {
+    if (!summary || !summary.length) {
+      summaryGrid.innerHTML = `<div class="stat-card"><div class="num">0</div><div class="label">최근 7일 오류 없음</div></div>`;
+      return;
+    }
+    summaryGrid.innerHTML = summary
+      .map((s) => `<div class="stat-card"><div class="num">${s.count.toLocaleString()}</div><div class="label">${escapeHtml(s.error_type)}</div></div>`)
+      .join('');
+    const existing = new Set(Array.from(typeFilter.options).map((o) => o.value));
+    summary.forEach((s) => {
+      if (!existing.has(s.error_type)) {
+        const opt = document.createElement('option');
+        opt.value = s.error_type;
+        opt.textContent = s.error_type;
+        typeFilter.appendChild(opt);
+      }
+    });
+  }
+
+  function rowHtml(r) {
+    return `
+      <tr>
+        <td class="muted" style="white-space:nowrap;">${escapeHtml(r.received_at)}</td>
+        <td><span class="pill pill-danger">${escapeHtml(r.error_type)}</span></td>
+        <td style="max-width:420px;white-space:pre-wrap;word-break:break-word;">${escapeHtml(r.message)}</td>
+        <td class="muted">${escapeHtml(r.context || '')}</td>
+        <td class="muted" style="white-space:nowrap;">${escapeHtml(r.app_version || '')} / ${escapeHtml(r.os || '')}</td>
+        <td class="muted" style="white-space:nowrap;">${escapeHtml((r.install_id || '').slice(0, 8))}</td>
+      </tr>`;
+  }
+
+  function renderRows(items, append) {
+    if (!items.length && !append) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-row">아직 수집된 오류 리포트가 없어요.</td></tr>`;
+      return;
+    }
+    const html = items.map(rowHtml).join('');
+    if (append) tbody.insertAdjacentHTML('beforeend', html);
+    else tbody.innerHTML = html;
+  }
+
+  async function loadFirstPage() {
+    cursorBefore = null;
+    totalSeen = 0;
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-row">불러오는 중...</td></tr>`;
+    try {
+      const data = await fetchReports({ reset: true });
+      renderSummary(data.summary);
+      renderRows(data.items, false);
+      totalSeen = data.items.length;
+      countLabel.textContent = `${totalSeen.toLocaleString()}건 표시 중`;
+      cursorBefore = data.next_before;
+      loadMoreBtn.style.display = data.next_before ? '' : 'none';
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+    }
+  }
+
+  async function loadMore() {
+    if (!cursorBefore) return;
+    try {
+      const data = await fetchReports({});
+      renderRows(data.items, true);
+      totalSeen += data.items.length;
+      countLabel.textContent = `${totalSeen.toLocaleString()}건 표시 중`;
+      cursorBefore = data.next_before;
+      loadMoreBtn.style.display = data.next_before ? '' : 'none';
+    } catch (e) {
+      alert(`더 불러오지 못했어요: ${e.message}`);
+    }
+  }
+
+  document.getElementById('refreshBtn').addEventListener('click', loadFirstPage);
+  loadMoreBtn.addEventListener('click', loadMore);
+  typeFilter.addEventListener('change', (e) => {
+    currentType = e.target.value;
+    loadFirstPage();
+  });
+
+  loadFirstPage();
+</script>
+
+</body>
+</html>
