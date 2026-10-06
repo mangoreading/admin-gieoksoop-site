@@ -141,6 +141,82 @@ export function closeModal() {
   modal.className = "modal";
 }
 
+// ---- 관리자 카드 취소(환불) ----
+// 결제 서버(Cloudflare Worker)가 로그인 토큰 + admins 문서를 직접 검증한 뒤 포트원에 실제 카드 취소를 요청한다.
+const ADMIN_REFUND_URL = "https://gieoksoop.com/api/payments/admin-refund";
+
+const REFUND_ERRORS = {
+  not_admin: "관리자 권한이 확인되지 않아요.",
+  payment_not_cancellable: "이미 취소됐거나 취소할 수 없는 결제예요.",
+  nothing_to_cancel: "취소할 수 있는 금액이 남아있지 않아요.",
+  invalid_amount: "취소 금액이 올바르지 않아요.",
+  payment_record_not_found: "결제 기록을 찾지 못했어요.",
+  portone_cancel_failed: "카드사(포트원) 취소 요청이 실패했어요.",
+};
+
+export function canAdminRefund(p) {
+  const status = p.status || "paid";
+  return !!p.payment_id && (status === "paid" || status === "partial_refunded");
+}
+
+// p: payments 문서({id, payment_id, amount, refunded_amount, plan ...}).
+// opts.onDone: 취소 성공 후 호출, opts.onBack: [닫기] 눌렀을 때 호출(없으면 모달 닫기).
+export function openAdminRefundModal(p, opts = {}) {
+  const total = Number(p.amount || 0);
+  const already = Number(p.refunded_amount || 0);
+  const cancellable = Math.max(0, total - already);
+  const back = () => (opts.onBack ? opts.onBack() : closeModal());
+  openModal(`
+    <h3>결제취소</h3>
+    <p class="form-hint">실제 카드 승인이 취소(환불)돼요. 되돌릴 수 없으니 금액을 꼭 확인해 주세요.</p>
+    <p class="muted" style="font-size:13px;">결제금액 ${total.toLocaleString()}원 · 이미 취소 ${already.toLocaleString()}원 · 취소 가능 ${cancellable.toLocaleString()}원<br>결제번호 ${escapeHtml(p.payment_id)}</p>
+    <div class="form-field"><label>취소 금액 (원)</label><input type="number" id="rfAmount" min="1" max="${cancellable}" value="${cancellable}"></div>
+    <div class="form-field"><label>취소 사유 (필수)</label><input type="text" id="rfReason" placeholder="예: 고객 요청, 테스트 결제"></div>
+    <div class="form-field"><label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="rfEnd" checked> 이용 권한도 함께 종료 (구독 해지 + 자동결제 중단)</label></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-outline" id="rfCancelBtn">닫기</button>
+      <button type="button" class="btn btn-danger" id="rfConfirmBtn">결제취소하기</button>
+    </div>
+  `);
+  document.getElementById("rfCancelBtn").addEventListener("click", back);
+  document.getElementById("rfConfirmBtn").addEventListener("click", async () => {
+    const amount = Number(document.getElementById("rfAmount").value);
+    const reason = document.getElementById("rfReason").value.trim();
+    const endAccess = document.getElementById("rfEnd").checked;
+    if (!amount || amount < 1 || amount > cancellable) {
+      toast("취소 금액을 확인해 주세요.", true);
+      return;
+    }
+    if (!reason) {
+      toast("취소 사유를 입력해 주세요.", true);
+      return;
+    }
+    const btn = document.getElementById("rfConfirmBtn");
+    btn.disabled = true;
+    btn.textContent = "취소 처리 중...";
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(ADMIN_REFUND_URL, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentId: p.payment_id, amount, reason, endAccess }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        const msg = REFUND_ERRORS[data.error] || data.error || "HTTP " + res.status;
+        throw new Error(msg + (data.detail ? " (" + data.detail + ")" : ""));
+      }
+      toast(`${Number(data.refundedAmount).toLocaleString()}원 결제취소를 완료했어요.`);
+      if (opts.onDone) opts.onDone(data);
+      else closeModal();
+    } catch (e) {
+      toast("취소하지 못했어요: " + (e.message || e), true);
+      btn.disabled = false;
+      btn.textContent = "결제취소하기";
+    }
+  });
+}
+
 export function escapeHtml(str) {
   if (str === null || str === undefined) return "";
   return String(str)
