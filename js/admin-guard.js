@@ -154,6 +154,33 @@ const REFUND_ERRORS = {
   portone_cancel_failed: "카드사(포트원) 취소 요청이 실패했어요.",
 };
 
+// 수동 결제 등록/삭제(서버가 관리자 검증 후 결제 기록 + 이용 기간을 함께 처리한다).
+// payload: { action: "create", uid, paidAt, plan, amount, method, memo, startDate } 또는 { action: "delete", paymentDocId }
+const ADMIN_MANUAL_URL = "https://gieoksoop.com/api/payments/admin-manual";
+const MANUAL_ERRORS = {
+  not_admin: "관리자 권한이 확인되지 않아요.",
+  invalid_params: "입력값을 확인해 주세요.",
+  user_not_found: "회원을 찾지 못했어요.",
+  payment_record_not_found: "결제 기록을 찾지 못했어요.",
+  card_payment_not_deletable: "카드 결제 기록은 삭제할 수 없어요. 결제취소로 처리해 주세요.",
+  period_update_failed: "이용 기간을 되돌리지 못해 삭제하지 않았어요.",
+};
+
+export async function adminManualPayment(payload) {
+  const token = await auth.currentUser.getIdToken();
+  const res = await fetch(ADMIN_MANUAL_URL, {
+    method: "POST",
+    headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.ok) {
+    const msg = MANUAL_ERRORS[data.error] || data.error || "HTTP " + res.status;
+    throw new Error(msg + (data.detail ? " (" + data.detail + ")" : ""));
+  }
+  return data;
+}
+
 export function canAdminRefund(p) {
   const status = p.status || "paid";
   return !!p.payment_id && (status === "paid" || status === "partial_refunded");
@@ -172,7 +199,8 @@ export function openAdminRefundModal(p, opts = {}) {
     <p class="muted" style="font-size:13px;">결제금액 ${total.toLocaleString()}원 · 이미 취소 ${already.toLocaleString()}원 · 취소 가능 ${cancellable.toLocaleString()}원<br>결제번호 ${escapeHtml(p.payment_id)}</p>
     <div class="form-field"><label>취소 금액 (원)</label><input type="number" id="rfAmount" min="1" max="${cancellable}" value="${cancellable}"></div>
     <div class="form-field"><label>취소 사유 (필수)</label><input type="text" id="rfReason" placeholder="예: 고객 요청, 테스트 결제"></div>
-    <div class="form-field"><label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="rfEnd" checked> 이용 권한도 함께 종료 (구독 해지 + 자동결제 중단)</label></div>
+    <div class="form-field"><label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="rfEnd" checked> 이 결제로 부여된 이용 기간도 함께 회수</label>
+      <p class="form-hint">체크하면 이 결제가 준 이용 기간이 줄어들고(일부 금액만 취소해도 전부 회수), 뒤에 이어 붙은 결제 기간은 앞으로 당겨져요. 남는 이용 기간이 없으면 구독이 종료돼요. 체크하지 않으면 돈만 환불하고 이용 기간은 그대로 유지돼요.</p></div>
     <div class="modal-actions">
       <button type="button" class="btn btn-outline" id="rfCancelBtn">닫기</button>
       <button type="button" class="btn btn-danger" id="rfConfirmBtn">결제취소하기</button>
@@ -182,7 +210,7 @@ export function openAdminRefundModal(p, opts = {}) {
   document.getElementById("rfConfirmBtn").addEventListener("click", async () => {
     const amount = Number(document.getElementById("rfAmount").value);
     const reason = document.getElementById("rfReason").value.trim();
-    const endAccess = document.getElementById("rfEnd").checked;
+    const revokePeriod = document.getElementById("rfEnd").checked;
     if (!amount || amount < 1 || amount > cancellable) {
       toast("취소 금액을 확인해 주세요.", true);
       return;
@@ -199,7 +227,7 @@ export function openAdminRefundModal(p, opts = {}) {
       const res = await fetch(ADMIN_REFUND_URL, {
         method: "POST",
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId: p.payment_id, amount, reason, endAccess }),
+        body: JSON.stringify({ paymentId: p.payment_id, amount, reason, revokePeriod }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {

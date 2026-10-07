@@ -14,7 +14,7 @@
 <div class="admin-shell" id="adminRoot"></div>
 
 <script type="module">
-  import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml, canAdminRefund, openAdminRefundModal } from './js/admin-guard.js';
+  import { guardAdminPage, db, toast, openModal, closeModal, escapeHtml, canAdminRefund, openAdminRefundModal, adminManualPayment } from './js/admin-guard.js';
   import {
     collection, getDocs, doc, updateDoc, addDoc, deleteDoc, query, where,
   } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
@@ -406,24 +406,14 @@
       const saveBtn = document.getElementById('saveBtn');
       saveBtn.disabled = true;
       try {
-        await addDoc(collection(db, 'payments'), {
-          uid: u.id, amount, plan, method, memo: memo || null, status: 'paid',
-          paid_at: parseDateInput(paidAtVal), created_at: new Date(), created_by: adminLabel,
-          period_start: periodStart, period_end: periodEnd,
-        });
-        // 이용 권한 반영: 자동 갱신 없이 종료일까지만 이용(기존 만료 처리가 종료일에 구독을 끝낸다).
-        await updateDoc(doc(db, 'users', u.id), {
-          subscription_status: 'active',
-          subscription_plan: plan,
-          payment_type: 'one_time',
-          auto_renew: false,
-          cancel_at_period_end: true,
-          next_billing_at: periodEnd,
-          annual_starts_at: plan === 'annual' && periodStart.getTime() > Date.now() ? periodStart : null,
+        // 서버가 관리자 확인 후 결제 기록을 만들고 이용 기간(기존 만료일 뒤에 이어 붙임)을 반영한다.
+        const result = await adminManualPayment({
+          action: 'create', uid: u.id, paidAt: paidAtVal, plan, amount, method, memo,
+          startDate: startEl.value,
         });
         u.subscription_status = 'active';
         u.subscription_plan = plan;
-        u.next_billing_at = { toDate: () => periodEnd };
+        u.next_billing_at = { toDate: () => new Date(result.expiresAt) };
         toast('결제내역을 등록하고 이용 기간을 반영했어요.');
         render(filterList());
         openDetail(u.id);
@@ -437,7 +427,7 @@
   function removePayment(uid, paymentId) {
     openModal(`
       <h3>결제내역 삭제</h3>
-      <p>이 결제 기록을 삭제할까요? 이 작업은 되돌릴 수 없어요.</p>
+      <p>이 수동 등록 결제 기록을 삭제할까요? 이 결제로 부여된 이용 기간도 함께 회수되고, 뒤에 이어 붙은 결제 기간은 앞으로 당겨져요. 되돌릴 수 없어요.</p>
       <div class="modal-actions">
         <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
         <button type="button" class="btn btn-danger" id="confirmBtn">삭제</button>
@@ -446,8 +436,15 @@
     document.getElementById('cancelBtn').addEventListener('click', () => openDetail(uid));
     document.getElementById('confirmBtn').addEventListener('click', async () => {
       try {
-        await deleteDoc(doc(db, 'payments', paymentId));
-        toast('삭제했어요.');
+        const result = await adminManualPayment({ action: 'delete', paymentDocId: paymentId });
+        // 이용 기간이 회수됐을 수 있으니 회원 정보를 다시 불러온다.
+        const snap = await getDocs(query(collection(db, 'users'), where('__name__', '==', uid)));
+        snap.forEach((d) => {
+          const idx = allUsers.findIndex((x) => x.id === uid);
+          if (idx >= 0) allUsers[idx] = { id: d.id, ...d.data() };
+        });
+        render(filterList());
+        toast(result.periodAdjusted ? '삭제하고 이용 기간을 되돌렸어요.' : '삭제했어요.');
         openDetail(uid);
       } catch (e) {
         toast('삭제하지 못했어요: ' + (e.message || e), true);
