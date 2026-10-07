@@ -32,6 +32,18 @@
       <div class="panel-head">
         <div class="toolbar">
           <input type="search" id="searchInput" placeholder="이름 또는 이메일로 검색">
+          <select id="statusFilter">
+            <option value="">구독상태: 전체</option>
+            <option value="active">구독중</option>
+            <option value="canceled">해지</option>
+            <option value="none">미구독</option>
+          </select>
+          <select id="planFilter">
+            <option value="">플랜: 전체</option>
+            <option value="monthly">월간</option>
+            <option value="annual">연간</option>
+            <option value="other">기타/없음</option>
+          </select>
         </div>
         <span class="muted" id="countLabel"></span>
       </div>
@@ -47,6 +59,8 @@
   const tbody = document.getElementById('tbody');
   const countLabel = document.getElementById('countLabel');
   const searchInput = document.getElementById('searchInput');
+  const statusFilter = document.getElementById('statusFilter');
+  const planFilter = document.getElementById('planFilter');
 
   function fmtDate(ts) {
     if (!ts || !ts.toDate) return '-';
@@ -100,32 +114,40 @@
     if (!u) return;
     openModal(`
       <h3>회원 상세</h3>
-      <div class="form-field"><label>이름</label><input type="text" id="editName" value="${escapeHtml(u.name || '')}"></div>
-      <div class="form-field"><label>이메일 (수정 불가)</label><input type="text" value="${escapeHtml(u.email || '')}" disabled></div>
-      <div class="form-field"><label>가입일 (수정 불가)</label><input type="text" value="${fmtDateTime(u.created_at)}" disabled></div>
-      <div class="form-field">
-        <label>구독 상태</label>
-        <select id="editStatus">
-          <option value="none" ${u.subscription_status === 'none' || !u.subscription_status ? 'selected' : ''}>미구독 (none)</option>
-          <option value="active" ${u.subscription_status === 'active' ? 'selected' : ''}>구독중 (active)</option>
-          <option value="canceled" ${u.subscription_status === 'canceled' ? 'selected' : ''}>해지 (canceled)</option>
-        </select>
-        <p class="form-hint">보통은 결제(카드)에 따라 자동으로 바뀌어요. 계좌이체 등 예외적으로 수동 결제를 확인했을 때만 여기서 직접 바꿔주세요.</p>
-      </div>
-      <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
-      <div class="form-field"><label>등록된 카드</label><input type="text" value="${u.card_number ? escapeHtml(((u.card_name || '') + ' ' + u.card_number).trim()) : '등록된 카드 없음'}" disabled></div>
-      <div class="form-field"><label>구독기간</label><input type="text" value="${u.next_billing_at ? escapeHtml((u.billing_key_issued_at ? fmtDate(u.billing_key_issued_at) + ' ~ ' : '') + '다음 결제일 ' + fmtDate(u.next_billing_at)) : '-'}" disabled></div>
-      <p class="form-hint">uid: ${escapeHtml(u.id)}</p>
-
-      <div class="form-field" style="border-top:1px solid var(--border);padding-top:16px;margin-top:4px;">
-        <label>계정 상태</label>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-          ${u.suspended ? '<span class="pill pill-danger">일시중지됨</span>' : '<span class="pill pill-ok">정상 이용중</span>'}
-          <button type="button" class="btn ${u.suspended ? 'btn-outline' : 'btn-danger'} btn-sm" id="suspendBtn">${u.suspended ? '일시중지 해제' : '서비스 일시중지'}</button>
+      <div class="detail-grid">
+        <div class="detail-block">
+          <h4>회원정보</h4>
+          <div class="form-field"><label>이름</label><input type="text" id="editName" value="${escapeHtml(u.name || '')}"></div>
+          <div class="form-field"><label>이메일 (수정 불가)</label><input type="text" value="${escapeHtml(u.email || '')}" disabled></div>
+          <div class="form-field"><label>가입일 (수정 불가)</label><input type="text" value="${fmtDateTime(u.created_at)}" disabled></div>
+          <div class="form-field">
+            <label>계정 상태</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              ${u.suspended ? '<span class="pill pill-danger">일시중지됨</span>' : '<span class="pill pill-ok">정상 이용중</span>'}
+              <button type="button" class="btn ${u.suspended ? 'btn-outline' : 'btn-danger'} btn-sm" id="suspendBtn">${u.suspended ? '일시중지 해제' : '서비스 일시중지'}</button>
+            </div>
+            ${u.suspended && u.suspended_at ? `<p class="form-hint">${fmtDateTime(u.suspended_at)} 정지${u.suspended_by ? ' · 처리자: ' + escapeHtml(u.suspended_by) : ''}</p>` : ''}
+            ${u.suspend_note ? `<p class="form-hint">메모: ${escapeHtml(u.suspend_note)}</p>` : ''}
+            <p class="form-hint">명의도용, 불합리한 민원 등이 확인됐을 때 서비스 이용을 강제로 정지시켜요. 실제 로그인 차단은 앱/서버 쪽에서 이 값(suspended)을 확인하도록 연동돼 있어야 동작해요.</p>
+          </div>
+          <p class="form-hint" style="margin-bottom:16px;">uid: ${escapeHtml(u.id)}</p>
         </div>
-        ${u.suspended && u.suspended_at ? `<p class="form-hint">${fmtDateTime(u.suspended_at)} 정지${u.suspended_by ? ' · 처리자: ' + escapeHtml(u.suspended_by) : ''}</p>` : ''}
-        ${u.suspend_note ? `<p class="form-hint">메모: ${escapeHtml(u.suspend_note)}</p>` : ''}
-        <p class="form-hint">명의도용, 불합리한 민원 등이 확인됐을 때 서비스 이용을 강제로 정지시켜요. 실제 로그인 차단은 앱/서버 쪽에서 이 값(suspended)을 확인하도록 연동돼 있어야 동작해요.</p>
+
+        <div class="detail-block">
+          <h4>구독정보</h4>
+          <div class="form-field">
+            <label>구독 상태</label>
+            <select id="editStatus">
+              <option value="none" ${u.subscription_status === 'none' || !u.subscription_status ? 'selected' : ''}>미구독 (none)</option>
+              <option value="active" ${u.subscription_status === 'active' ? 'selected' : ''}>구독중 (active)</option>
+              <option value="canceled" ${u.subscription_status === 'canceled' ? 'selected' : ''}>해지 (canceled)</option>
+            </select>
+            <p class="form-hint">보통은 결제(카드)에 따라 자동으로 바뀌어요. 계좌이체 등 예외적으로 수동 결제를 확인했을 때만 여기서 직접 바꿔주세요.</p>
+          </div>
+          <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
+          <div class="form-field"><label>등록된 카드</label><input type="text" value="${u.card_number ? escapeHtml(((u.card_name || '') + ' ' + u.card_number).trim()) : '등록된 카드 없음'}" disabled></div>
+          <div class="form-field"><label>구독기간</label><input type="text" value="${u.next_billing_at ? escapeHtml((u.billing_key_issued_at ? fmtDate(u.billing_key_issued_at) + ' ~ ' : '') + '다음 결제일 ' + fmtDate(u.next_billing_at)) : '-'}" disabled></div>
+        </div>
       </div>
 
       <div class="form-field" style="border-top:1px solid var(--border);padding-top:16px;">
@@ -158,7 +180,7 @@
         u.subscription_plan = subscription_plan;
         closeModal();
         toast('저장했어요.');
-        render(filterList(searchInput.value));
+        render(filterList());
       } catch (e) {
         toast('저장하지 못했어요: ' + (e.message || e), true);
       }
@@ -194,7 +216,7 @@
         u.suspended_at = { toDate: () => new Date() };
         u.suspended_by = adminLabel;
         toast('서비스를 일시중지했어요.');
-        render(filterList(searchInput.value));
+        render(filterList());
         openDetail(u.id);
       } catch (e) {
         toast('처리하지 못했어요: ' + (e.message || e), true);
@@ -219,7 +241,7 @@
         });
         u.suspended = false;
         toast('일시중지를 해제했어요.');
-        render(filterList(searchInput.value));
+        render(filterList());
         openDetail(u.id);
       } catch (e) {
         toast('처리하지 못했어요: ' + (e.message || e), true);
@@ -336,15 +358,25 @@
     });
   }
 
-  function filterList(q) {
-    const needle = (q || '').trim().toLowerCase();
-    if (!needle) return allUsers;
-    return allUsers.filter(
-      (u) => (u.name || '').toLowerCase().includes(needle) || (u.email || '').toLowerCase().includes(needle)
-    );
+  // 검색어 + 구독상태 + 플랜 조건을 모두 만족하는 회원만 남긴다.
+  function filterList() {
+    const needle = (searchInput.value || '').trim().toLowerCase();
+    const statusQ = statusFilter.value;
+    const planQ = planFilter.value;
+    return allUsers.filter((u) => {
+      if (needle && !((u.name || '').toLowerCase().includes(needle) || (u.email || '').toLowerCase().includes(needle))) return false;
+      if (statusQ && (u.subscription_status || 'none') !== statusQ) return false;
+      if (planQ) {
+        const plan = u.subscription_plan === 'monthly' || u.subscription_plan === 'annual' ? u.subscription_plan : 'other';
+        if (plan !== planQ) return false;
+      }
+      return true;
+    });
   }
 
-  searchInput.addEventListener('input', () => render(filterList(searchInput.value)));
+  searchInput.addEventListener('input', () => render(filterList()));
+  statusFilter.addEventListener('change', () => render(filterList()));
+  planFilter.addEventListener('change', () => render(filterList()));
 
   try {
     const snap = await getDocs(collection(db, 'users'));
