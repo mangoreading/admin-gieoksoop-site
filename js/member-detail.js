@@ -92,6 +92,7 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
             <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
             <div class="form-field"><label>등록된 카드</label><input type="text" value="${u.card_number ? escapeHtml(((u.card_name || '') + ' ' + u.card_number).trim()) : '등록된 카드 없음'}" disabled></div>
             <div class="form-field"><label>구독기간</label><input type="text" value="${u.next_billing_at ? escapeHtml((u.billing_key_issued_at ? fmtDate(u.billing_key_issued_at) + ' ~ ' : '~ ') + fmtLastTs(u.next_billing_at) + (u.auto_renew !== false && u.payment_type !== 'one_time' ? ' (다음 결제일 ' + fmtDate(u.next_billing_at) + ')' : '')) : '-'}" disabled></div>
+            ${Number(u.billing_retry_count) > 0 ? `<div class="form-field"><label>자동결제 상태</label><input type="text" value="${escapeHtml('결제 실패 ' + u.billing_retry_count + '회' + (u.billing_retry_at && u.billing_retry_at.toDate ? ' · 다음 재시도 ' + fmtDate(u.billing_retry_at) + ' ' + String(new Date(u.billing_retry_at.toDate().getTime() + KST_MS).getUTCHours()).padStart(2, '0') + ':00경' : '') + (u.billing_last_failure_reason ? ' · ' + u.billing_last_failure_reason : ''))}" disabled></div>` : ''}
           </div>
         </div>
 
