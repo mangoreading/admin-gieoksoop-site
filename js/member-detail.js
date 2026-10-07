@@ -7,10 +7,34 @@ import {
 // getUsers(): 화면이 들고 있는 회원 배열({id, ...필드}) -- 팝업이 여기서 회원을 찾고, 서버가 바꾼 값은 같은 배열에 갱신해 넣는다.
 // onChange(): 팝업에서 회원/결제 정보가 바뀐 뒤 호출 -- 뒤에 깔린 목록 화면을 다시 그리는 용도.
 export function createMemberDetail({ adminLabel, getUsers, onChange }) {
+  // 이용 기간 표시: 한국시간(KST) 날짜 단위. 기간은 "시작일 00:00 ~ N개월 뒤 같은 날 00:00(포함하지 않음)"으로 저장되므로
+  // 종료는 하루 앞선 날짜(마지막 이용일)로 보여준다. 서버 worker/src/ledger.js와 같은 규칙.
+  var KST_MS = 9 * 3600 * 1000;
+  var DAY_MS = 24 * 3600 * 1000;
+  function pad2(n) { return String(n).padStart(2, '0'); }
+  function kstFmt(d) {
+    const k = new Date(d.getTime() + KST_MS);
+    return `${k.getUTCFullYear()}.${pad2(k.getUTCMonth() + 1)}.${pad2(k.getUTCDate())}`;
+  }
+  function fmtLast(d) { return kstFmt(new Date(d.getTime() - DAY_MS)); }
+  function kstDayStart(d) { return new Date(Math.floor((d.getTime() + KST_MS) / DAY_MS) * DAY_MS - KST_MS); }
+  function kstDayCeil(d) { const s = kstDayStart(d); return s.getTime() === d.getTime() ? d : new Date(s.getTime() + DAY_MS); }
+  function addMonthsKst(date, months) {
+    const k = new Date(date.getTime() + KST_MS);
+    const total = k.getUTCFullYear() * 12 + k.getUTCMonth() + months;
+    const y = Math.floor(total / 12);
+    const m = ((total % 12) + 12) % 12;
+    const dim = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    const day = Math.min(k.getUTCDate(), dim);
+    return new Date(Date.UTC(y, m, day, k.getUTCHours(), k.getUTCMinutes(), k.getUTCSeconds(), k.getUTCMilliseconds()) - KST_MS);
+  }
   function fmtDate(ts) {
     if (!ts || !ts.toDate) return '-';
-    const d = ts.toDate();
-    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+    return kstFmt(ts.toDate());
+  }
+  function fmtLastTs(ts) {
+    if (!ts || !ts.toDate) return '-';
+    return fmtLast(ts.toDate());
   }
 
   // 서버(Worker)가 이용 기간 등을 바꿨을 수 있으니 회원 문서를 다시 읽어 배열에 반영한다.
@@ -67,7 +91,7 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
             </div>
             <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
             <div class="form-field"><label>등록된 카드</label><input type="text" value="${u.card_number ? escapeHtml(((u.card_name || '') + ' ' + u.card_number).trim()) : '등록된 카드 없음'}" disabled></div>
-            <div class="form-field"><label>구독기간</label><input type="text" value="${u.next_billing_at ? escapeHtml((u.billing_key_issued_at ? fmtDate(u.billing_key_issued_at) + ' ~ ' : '') + '다음 결제일 ' + fmtDate(u.next_billing_at)) : '-'}" disabled></div>
+            <div class="form-field"><label>구독기간</label><input type="text" value="${u.next_billing_at ? escapeHtml((u.billing_key_issued_at ? fmtDate(u.billing_key_issued_at) + ' ~ ' : '~ ') + fmtLastTs(u.next_billing_at) + (u.auto_renew !== false && u.payment_type !== 'one_time' ? ' (다음 결제일 ' + fmtDate(u.next_billing_at) + ')' : '')) : '-'}" disabled></div>
           </div>
         </div>
 
@@ -174,13 +198,12 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
     // 결제일 기준으로 월간 1개월/연간 12개월을 추정해 "(추정)"으로 표시한다(연간을 이어 붙인 건은 실제와 다를 수 있음).
     function paymentPeriodLabel(p) {
       if (p.period_start && p.period_start.toDate && p.period_end && p.period_end.toDate) {
-        return `${fmtDate(p.period_start)} ~ ${fmtDate(p.period_end)}`;
+        return `${fmtDate(p.period_start)} ~ ${fmtLastTs(p.period_end)}`;
       }
       if (p.paid_at && p.paid_at.toDate && p.payment_id && (p.plan === 'monthly' || p.plan === 'annual')) {
         const start = p.paid_at.toDate();
-        const end = new Date(start.getTime());
-        end.setMonth(end.getMonth() + (p.plan === 'annual' ? 12 : 1));
-        return `${fmtDate(p.paid_at)} ~ ${fmtDate({ toDate: () => end })} <span style="font-size:11px;">(추정)</span>`;
+        const end = addMonthsKst(start, p.plan === 'annual' ? 12 : 1);
+        return `${fmtDate(p.paid_at)} ~ ${fmtLastTs({ toDate: () => end })} <span style="font-size:11px;">(추정)</span>`;
       }
       return '-';
     }
@@ -229,18 +252,15 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
     }
 
     function addMonthsLocal(date, months) {
-      const d = new Date(date.getTime());
-      d.setMonth(d.getMonth() + months);
-      return d;
+      return addMonthsKst(date, months);
     }
 
     function toDateInput(d) {
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      return kstFmt(d).replace(/\./g, '-');
     }
 
     function parseDateInput(v) {
-      const [y, m, d] = v.split('-').map(Number);
-      return new Date(y, m - 1, d);
+      return new Date(`${v}T00:00:00+09:00`);
     }
 
     const MANUAL_PLANS = {
@@ -254,7 +274,8 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
       const now = new Date();
       const activeUntil = u.subscription_status === 'active' && u.next_billing_at && u.next_billing_at.toDate && u.next_billing_at.toDate().getTime() > now.getTime()
         ? u.next_billing_at.toDate() : null;
-      const defaultStart = activeUntil || now;
+      // 서버와 같은 규칙: 이용 중이면 현재 종료 시각(00:00이 아니면 다음 날 00:00) 뒤, 아니면 오늘.
+      const defaultStart = activeUntil ? kstDayCeil(activeUntil) : now;
       openModal(`
         <h3>결제 내역 수동 등록</h3>
         <p class="form-hint">계좌이체 등으로 직접 확인한 결제를 기록하고, 선택한 플랜만큼 이용 기간을 부여해요(카드 결제는 포트원으로 자동 기록되니 예외적인 경우에만 사용해 주세요).</p>
@@ -270,7 +291,7 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
         <div class="form-field">
           <label>구독 시작일</label>
           <input type="date" id="fStart" value="${toDateInput(defaultStart)}">
-          <p class="form-hint">${activeUntil ? '현재 이용 만료일(' + fmtDate(u.next_billing_at) + ') 뒤에 이어 붙도록 기본값이 잡혀요.' : '현재 이용 중인 기간이 없어 오늘부터 시작해요.'}</p>
+          <p class="form-hint">${activeUntil ? '현재 이용 종료일(' + fmtLastTs(u.next_billing_at) + ') 다음 날부터 이어 붙도록 기본값이 잡혀요.' : '현재 이용 중인 기간이 없어 오늘부터 시작해요.'}</p>
         </div>
         <div class="form-field"><label>구독 종료일 (자동 계산)</label><input type="text" id="fEnd" disabled></div>
         <div class="form-field">
@@ -299,7 +320,7 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
       };
       function refresh() {
         const end = currentEnd();
-        endEl.value = end ? toDateInput(end).replace(/-/g, '.') : '-';
+        endEl.value = end ? fmtLast(end) : '-';
         effectEl.textContent = end
           ? `등록하면 이 회원은 ${endEl.value}까지 이용할 수 있고, 카드 자동결제는 종료돼요(자동 갱신 없음).`
           : '';

@@ -48,7 +48,7 @@
       </div>
       <div style="overflow-x:auto;">
         <table class="data-table">
-          <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th><th>플랜</th><th>다음 결제일</th><th>계정상태</th><th></th></tr></thead>
+          <thead><tr><th>이름</th><th>이메일</th><th>가입일</th><th>구독상태</th><th>플랜</th><th>다음 결제일 / 이용 종료일</th><th>계정상태</th><th></th></tr></thead>
           <tbody id="tbody"><tr><td colspan="8" class="empty-row">불러오는 중...</td></tr></tbody>
         </table>
       </div>
@@ -61,10 +61,24 @@
   const statusFilter = document.getElementById('statusFilter');
   const planFilter = document.getElementById('planFilter');
 
+  // 이용 기간은 한국시간 날짜 단위(종료 시각은 포함하지 않음)라, 종료일은 하루 앞선 날짜(마지막 이용일)로 보여준다.
+  const KST_MS = 9 * 3600 * 1000;
+  function kstFmt(d) {
+    const k = new Date(d.getTime() + KST_MS);
+    return `${k.getUTCFullYear()}.${String(k.getUTCMonth() + 1).padStart(2, '0')}.${String(k.getUTCDate()).padStart(2, '0')}`;
+  }
   function fmtDate(ts) {
     if (!ts || !ts.toDate) return '-';
-    const d = ts.toDate();
-    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+    return kstFmt(ts.toDate());
+  }
+  function fmtLastTs(ts) {
+    if (!ts || !ts.toDate) return '-';
+    return kstFmt(new Date(ts.toDate().getTime() - 24 * 3600 * 1000));
+  }
+  function nextOrEnd(u) {
+    if (!u.next_billing_at) return '-';
+    const auto = u.subscription_status === 'active' && u.auto_renew !== false && u.payment_type !== 'one_time';
+    return auto ? `${fmtDate(u.next_billing_at)} 결제` : `${fmtLastTs(u.next_billing_at)} 종료`;
   }
 
   function statusPill(status) {
@@ -92,7 +106,7 @@
         <td class="muted">${fmtDate(u.created_at)}</td>
         <td>${statusPill(u.subscription_status)}</td>
         <td class="muted">${escapeHtml(u.subscription_plan || '-')}</td>
-        <td class="muted">${u.next_billing_at ? fmtDate(u.next_billing_at) : '-'}</td>
+        <td class="muted">${nextOrEnd(u)}</td>
         <td>${u.suspended ? '<span class="pill pill-danger">일시중지</span>' : '<span class="pill pill-ok">정상</span>'}</td>
         <td><button class="btn btn-outline btn-sm" data-detail="${u.id}">상세</button></td>
       </tr>`
