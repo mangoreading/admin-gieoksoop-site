@@ -15,9 +15,10 @@
 
 <script type="module">
   import { guardAdminPage, db, escapeHtml, canAdminRefund, openAdminRefundModal } from './js/admin-guard.js';
+  import { createMemberDetail } from './js/member-detail.js';
   import { collection, getDocs } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
-  await guardAdminPage({
+  const { user: adminUser } = await guardAdminPage({
     activeKey: 'payments',
     title: '구독결제 관리',
     desc: '포트원(PortOne)으로 처리된 구독 결제 내역과 매출 현황을 확인할 수 있어요.',
@@ -53,48 +54,54 @@
 
   let payments = [];
   let usersById = {};
+  let allUsers = [];
 
-  try {
+  // 결제 기록과 회원 정보를 (다시) 불러온다. 회원 상세 팝업에서 값이 바뀐 뒤에도 이 함수로 목록을 갱신한다.
+  async function loadData() {
     const [paymentsSnap, usersSnap] = await Promise.all([
       getDocs(collection(db, 'payments')),
       getDocs(collection(db, 'users')),
     ]);
-
-    usersById = Object.fromEntries(usersSnap.docs.map((d) => [d.id, d.data()]));
+    allUsers = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    usersById = Object.fromEntries(allUsers.map((u) => [u.id, u]));
     payments = paymentsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
     payments.sort((a, b) => {
       const ta = (a.paid_at && a.paid_at.toDate ? a.paid_at.toDate() : (a.created_at && a.created_at.toDate ? a.created_at.toDate() : new Date(0))).getTime();
       const tb = (b.paid_at && b.paid_at.toDate ? b.paid_at.toDate() : (b.created_at && b.created_at.toDate ? b.created_at.toDate() : new Date(0))).getTime();
       return tb - ta;
     });
+  }
+
+  try {
+    await loadData();
   } catch (e) {
     content.innerHTML = `<p class="muted">결제내역을 불러오지 못했어요: ${escapeHtml(e.message || String(e))}</p>`;
     throw e;
   }
 
   // ---- 요약 통계 ----
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-
-  const paidThisMonth = payments.filter(
-    (p) => p.status === 'paid' && p.paid_at && p.paid_at.toDate && p.paid_at.toDate().getTime() >= monthStart
-  );
-  const revenueThisMonth = paidThisMonth.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-  const failedThisMonth = payments.filter(
-    (p) => p.status === 'failed' && p.created_at && p.created_at.toDate && p.created_at.toDate().getTime() >= monthStart
-  ).length;
-
-  const activeUsers = Object.values(usersById).filter((u) => u.subscription_status === 'active');
-  const monthlySubs = activeUsers.filter((u) => u.subscription_plan === 'monthly').length;
-  const annualSubs = activeUsers.filter((u) => u.subscription_plan === 'annual').length;
-
-  content.innerHTML = `
-    <div class="stat-grid">
+  function statsHtml() {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const paidThisMonth = payments.filter(
+      (p) => p.status === 'paid' && p.paid_at && p.paid_at.toDate && p.paid_at.toDate().getTime() >= monthStart
+    );
+    const revenueThisMonth = paidThisMonth.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const failedThisMonth = payments.filter(
+      (p) => p.status === 'failed' && p.created_at && p.created_at.toDate && p.created_at.toDate().getTime() >= monthStart
+    ).length;
+    const activeUsers = allUsers.filter((u) => u.subscription_status === 'active');
+    const monthlySubs = activeUsers.filter((u) => u.subscription_plan === 'monthly').length;
+    const annualSubs = activeUsers.filter((u) => u.subscription_plan === 'annual').length;
+    return `
       <div class="stat-card"><div class="num">${revenueThisMonth.toLocaleString()}원</div><div class="label">이번 달 매출(완료 기준)</div></div>
       <div class="stat-card"><div class="num">${activeUsers.length.toLocaleString()}명</div><div class="label">활성 구독자 (월간 ${monthlySubs} · 연간 ${annualSubs})</div></div>
       <div class="stat-card"><div class="num">${payments.length.toLocaleString()}건</div><div class="label">전체 결제 기록</div></div>
-      <div class="stat-card"><div class="num">${failedThisMonth.toLocaleString()}건</div><div class="label">이번 달 결제 실패</div></div>
-    </div>
+      <div class="stat-card"><div class="num">${failedThisMonth.toLocaleString()}건</div><div class="label">이번 달 결제 실패</div></div>`;
+  }
+
+  content.innerHTML = `
+    <div class="stat-grid" id="statGrid">${statsHtml()}</div>
 
     <div class="panel">
       <div class="panel-head">
@@ -104,7 +111,14 @@
             <option value="">전체 상태</option>
             <option value="paid">완료</option>
             <option value="refunded">환불</option>
+            <option value="partial_refunded">부분환불</option>
             <option value="failed">실패</option>
+          </select>
+          <select id="planFilter">
+            <option value="">플랜: 전체</option>
+            <option value="monthly">월간</option>
+            <option value="annual">연간</option>
+            <option value="other">기타/없음</option>
           </select>
         </div>
         <span class="muted" id="countLabel"></span>
@@ -124,13 +138,19 @@
   const countLabel = document.getElementById('countLabel');
   const searchInput = document.getElementById('searchInput');
   const statusFilter = document.getElementById('statusFilter');
+  const planFilter = document.getElementById('planFilter');
 
   function render() {
     const q = searchInput.value.trim().toLowerCase();
     const statusQ = statusFilter.value;
+    const planQ = planFilter.value;
     const list = payments.filter((p) => {
       const status = p.status || 'paid';
       if (statusQ && status !== statusQ) return false;
+      if (planQ) {
+        const plan = p.plan === 'monthly' || p.plan === 'annual' ? p.plan : 'other';
+        if (plan !== planQ) return false;
+      }
       if (!q) return true;
       const u = usersById[p.uid] || {};
       return (u.name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
@@ -146,7 +166,7 @@
         return `
       <tr>
         <td class="muted">${fmtDateTime(p.paid_at || p.created_at)}</td>
-        <td>${escapeHtml(u.name || '(탈퇴/알 수 없음)')}<br><span class="muted" style="font-size:12px;">${escapeHtml(u.email || p.uid || '-')}</span></td>
+        <td>${u.name || u.email ? `<a href="#" data-member="${escapeHtml(p.uid)}" style="font-weight:600;">${escapeHtml(u.name || u.email)}</a>` : escapeHtml('(탈퇴/알 수 없음)')}<br><span class="muted" style="font-size:12px;">${escapeHtml(u.email || p.uid || '-')}</span></td>
         <td>${planLabel(p.plan)}</td>
         <td>${Number(p.amount || 0).toLocaleString()}원</td>
         <td class="muted">${escapeHtml(p.method || '-')}${p.card_number ? '<br><span style="font-size:12px;">' + escapeHtml((p.card_name || '') + ' ' + p.card_number).trim() + '</span>' : ''}</td>
@@ -157,6 +177,12 @@
       </tr>`;
       })
       .join('');
+    tbody.querySelectorAll('[data-member]').forEach((a) => {
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        openDetail(a.getAttribute('data-member'));
+      });
+    });
     tbody.querySelectorAll('[data-refundpay]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const p = payments.find((x) => x.id === btn.getAttribute('data-refundpay'));
@@ -168,8 +194,24 @@
     });
   }
 
+  // 회원 이름을 누르면 회원관리와 같은 상세 팝업을 이 화면 위에 바로 띄운다. 팝업에서 바뀐 값은 목록/통계에 반영한다.
+  const { openDetail } = createMemberDetail({
+    adminLabel: adminUser.email || adminUser.uid,
+    getUsers: () => allUsers,
+    onChange: async () => {
+      try {
+        await loadData();
+        document.getElementById('statGrid').innerHTML = statsHtml();
+        render();
+      } catch (e) {
+        console.error(e);
+      }
+    },
+  });
+
   searchInput.addEventListener('input', render);
   statusFilter.addEventListener('change', render);
+  planFilter.addEventListener('change', render);
   render();
 </script>
 

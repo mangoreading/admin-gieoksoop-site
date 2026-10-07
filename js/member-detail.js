@@ -1,0 +1,371 @@
+// 회원 상세 팝업(회원정보 / 구독정보 / 유료 결제내역 / 수동 결제 등록·삭제 / 일시중지) -- 회원관리와 구독결제 관리 화면이 함께 쓴다.
+import { db, toast, openModal, closeModal, escapeHtml, canAdminRefund, openAdminRefundModal, adminManualPayment } from './admin-guard.js';
+import {
+  collection, getDocs, getDoc, doc, updateDoc, addDoc, query, where,
+} from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+// getUsers(): 화면이 들고 있는 회원 배열({id, ...필드}) -- 팝업이 여기서 회원을 찾고, 서버가 바꾼 값은 같은 배열에 갱신해 넣는다.
+// onChange(): 팝업에서 회원/결제 정보가 바뀐 뒤 호출 -- 뒤에 깔린 목록 화면을 다시 그리는 용도.
+export function createMemberDetail({ adminLabel, getUsers, onChange }) {
+  function fmtDate(ts) {
+    if (!ts || !ts.toDate) return '-';
+    const d = ts.toDate();
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // 서버(Worker)가 이용 기간 등을 바꿨을 수 있으니 회원 문서를 다시 읽어 배열에 반영한다.
+  async function refreshUser(uid) {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (!snap.exists()) return;
+    const users = getUsers();
+    const idx = users.findIndex((x) => x.id === uid);
+    const fresh = { id: snap.id, ...snap.data() };
+    if (idx >= 0) users[idx] = fresh;
+    else users.push(fresh);
+  }
+
+    function fmtDateTime(ts) {
+      if (!ts || !ts.toDate) return '-';
+      const d = ts.toDate();
+      return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    }
+
+    function openDetail(uid) {
+      const u = getUsers().find((x) => x.id === uid);
+      if (!u) return;
+      openModal(`
+        <h3>회원 상세</h3>
+        <div class="detail-grid">
+          <div class="detail-block">
+            <h4>회원정보</h4>
+            <div class="form-field"><label>이름</label><input type="text" id="editName" value="${escapeHtml(u.name || '')}"></div>
+            <div class="form-field"><label>이메일 (수정 불가)</label><input type="text" value="${escapeHtml(u.email || '')}" disabled></div>
+            <div class="form-field"><label>가입일 (수정 불가)</label><input type="text" value="${fmtDateTime(u.created_at)}" disabled></div>
+            <div class="form-field">
+              <label>계정 상태</label>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                ${u.suspended ? '<span class="pill pill-danger">일시중지됨</span>' : '<span class="pill pill-ok">정상 이용중</span>'}
+                <button type="button" class="btn ${u.suspended ? 'btn-outline' : 'btn-danger'} btn-sm" id="suspendBtn">${u.suspended ? '일시중지 해제' : '서비스 일시중지'}</button>
+              </div>
+              ${u.suspended && u.suspended_at ? `<p class="form-hint">${fmtDateTime(u.suspended_at)} 정지${u.suspended_by ? ' · 처리자: ' + escapeHtml(u.suspended_by) : ''}</p>` : ''}
+              ${u.suspend_note ? `<p class="form-hint">메모: ${escapeHtml(u.suspend_note)}</p>` : ''}
+              <p class="form-hint">명의도용, 불합리한 민원 등이 확인됐을 때 서비스 이용을 강제로 정지시켜요. 실제 로그인 차단은 앱/서버 쪽에서 이 값(suspended)을 확인하도록 연동돼 있어야 동작해요.</p>
+            </div>
+            <p class="form-hint" style="margin-bottom:16px;">uid: ${escapeHtml(u.id)}</p>
+          </div>
+
+          <div class="detail-block">
+            <h4>구독정보</h4>
+            <div class="form-field">
+              <label>구독 상태</label>
+              <select id="editStatus">
+                <option value="none" ${u.subscription_status === 'none' || !u.subscription_status ? 'selected' : ''}>미구독 (none)</option>
+                <option value="active" ${u.subscription_status === 'active' ? 'selected' : ''}>구독중 (active)</option>
+                <option value="canceled" ${u.subscription_status === 'canceled' ? 'selected' : ''}>해지 (canceled)</option>
+              </select>
+              <p class="form-hint">보통은 결제(카드)에 따라 자동으로 바뀌어요. 계좌이체 등 예외적으로 수동 결제를 확인했을 때만 여기서 직접 바꿔주세요.</p>
+            </div>
+            <div class="form-field"><label>플랜 메모</label><input type="text" id="editPlan" value="${escapeHtml(u.subscription_plan || '')}" placeholder="예: annual_2026"></div>
+            <div class="form-field"><label>등록된 카드</label><input type="text" value="${u.card_number ? escapeHtml(((u.card_name || '') + ' ' + u.card_number).trim()) : '등록된 카드 없음'}" disabled></div>
+            <div class="form-field"><label>구독기간</label><input type="text" value="${u.next_billing_at ? escapeHtml((u.billing_key_issued_at ? fmtDate(u.billing_key_issued_at) + ' ~ ' : '') + '다음 결제일 ' + fmtDate(u.next_billing_at)) : '-'}" disabled></div>
+          </div>
+        </div>
+
+        <div class="form-field" style="border-top:1px solid var(--border);padding-top:16px;">
+          <label>유료 결제내역</label>
+          <div style="overflow-x:auto;">
+            <table class="data-table" style="font-size:13px;">
+              <thead><tr><th>결제일</th><th>구독기간</th><th>금액</th><th>플랜</th><th>방법</th><th>상태</th><th></th></tr></thead>
+              <tbody id="paymentsTbody"><tr><td colspan="7" class="empty-row">불러오는 중...</td></tr></tbody>
+            </table>
+          </div>
+          <button type="button" class="btn btn-outline btn-sm" id="addPaymentBtn" style="margin-top:10px;">+ 결제 내역 수동 등록</button>
+          <p class="form-hint">대부분의 결제는 포트원(카드)으로 자동 기록돼요. 계좌이체 등 예외적으로 직접 확인한 결제만 여기서 수동으로 기록해두면 이 회원의 결제 history로 함께 쌓여요.</p>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+          <button type="button" class="btn btn-primary" id="saveBtn">저장</button>
+        </div>
+      `, { size: 'lg' });
+
+      document.getElementById('cancelBtn').addEventListener('click', closeModal);
+      document.getElementById('saveBtn').addEventListener('click', async () => {
+        const name = document.getElementById('editName').value.trim();
+        const subscription_status = document.getElementById('editStatus').value;
+        const subscription_plan = document.getElementById('editPlan').value.trim() || null;
+        try {
+          await updateDoc(doc(db, 'users', uid), { name, subscription_status, subscription_plan });
+          u.name = name;
+          u.subscription_status = subscription_status;
+          u.subscription_plan = subscription_plan;
+          closeModal();
+          toast('저장했어요.');
+          onChange();
+        } catch (e) {
+          toast('저장하지 못했어요: ' + (e.message || e), true);
+        }
+      });
+
+      document.getElementById('suspendBtn').addEventListener('click', () => {
+        if (u.suspended) openResumeConfirm(u);
+        else openSuspendConfirm(u);
+      });
+      document.getElementById('addPaymentBtn').addEventListener('click', () => openPaymentEditor(u));
+      loadPayments(uid);
+    }
+
+    function openSuspendConfirm(u) {
+      openModal(`
+        <h3>서비스 일시중지</h3>
+        <p>"${escapeHtml(u.name || u.email)}"님의 서비스 이용을 일시중지할까요? 정지 중에는 로그인/동기화가 제한돼요.</p>
+        <div class="form-field"><label>정지 사유 메모</label><textarea id="fSuspendNote" rows="3" placeholder="예: 명의도용 의심 신고 접수, 확인 중">${escapeHtml(u.suspend_note || '')}</textarea></div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+          <button type="button" class="btn btn-danger" id="confirmBtn">일시중지</button>
+        </div>
+      `);
+      document.getElementById('cancelBtn').addEventListener('click', () => openDetail(u.id));
+      document.getElementById('confirmBtn').addEventListener('click', async () => {
+        const suspend_note = document.getElementById('fSuspendNote').value.trim();
+        try {
+          await updateDoc(doc(db, 'users', u.id), {
+            suspended: true, suspend_note, suspended_at: new Date(), suspended_by: adminLabel,
+          });
+          u.suspended = true;
+          u.suspend_note = suspend_note;
+          u.suspended_at = { toDate: () => new Date() };
+          u.suspended_by = adminLabel;
+          toast('서비스를 일시중지했어요.');
+          onChange();
+          openDetail(u.id);
+        } catch (e) {
+          toast('처리하지 못했어요: ' + (e.message || e), true);
+        }
+      });
+    }
+
+    function openResumeConfirm(u) {
+      openModal(`
+        <h3>일시중지 해제</h3>
+        <p>"${escapeHtml(u.name || u.email)}"님의 서비스 일시중지를 해제할까요?</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+          <button type="button" class="btn btn-primary" id="confirmBtn">해제</button>
+        </div>
+      `);
+      document.getElementById('cancelBtn').addEventListener('click', () => openDetail(u.id));
+      document.getElementById('confirmBtn').addEventListener('click', async () => {
+        try {
+          await updateDoc(doc(db, 'users', u.id), {
+            suspended: false, suspended_resumed_at: new Date(), suspended_resumed_by: adminLabel,
+          });
+          u.suspended = false;
+          toast('일시중지를 해제했어요.');
+          onChange();
+          openDetail(u.id);
+        } catch (e) {
+          toast('처리하지 못했어요: ' + (e.message || e), true);
+        }
+      });
+    }
+
+    // 결제별 구독기간. 새 결제는 서버가 period_start/period_end를 저장하고, 예전 기록(저장값 없음)은
+    // 결제일 기준으로 월간 1개월/연간 12개월을 추정해 "(추정)"으로 표시한다(연간을 이어 붙인 건은 실제와 다를 수 있음).
+    function paymentPeriodLabel(p) {
+      if (p.period_start && p.period_start.toDate && p.period_end && p.period_end.toDate) {
+        return `${fmtDate(p.period_start)} ~ ${fmtDate(p.period_end)}`;
+      }
+      if (p.paid_at && p.paid_at.toDate && p.payment_id && (p.plan === 'monthly' || p.plan === 'annual')) {
+        const start = p.paid_at.toDate();
+        const end = new Date(start.getTime());
+        end.setMonth(end.getMonth() + (p.plan === 'annual' ? 12 : 1));
+        return `${fmtDate(p.paid_at)} ~ ${fmtDate({ toDate: () => end })} <span style="font-size:11px;">(추정)</span>`;
+      }
+      return '-';
+    }
+
+    async function loadPayments(uid) {
+      const tb = document.getElementById('paymentsTbody');
+      if (!tb) return;
+      try {
+        const snap = await getDocs(query(collection(db, 'payments'), where('uid', '==', uid)));
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        list.sort((a, b) => {
+          const ta = a.paid_at && a.paid_at.toDate ? a.paid_at.toDate().getTime() : 0;
+          const tb2 = b.paid_at && b.paid_at.toDate ? b.paid_at.toDate().getTime() : 0;
+          return tb2 - ta;
+        });
+        if (list.length === 0) {
+          tb.innerHTML = `<tr><td colspan="7" class="empty-row">등록된 결제내역이 없어요.</td></tr>`;
+          return;
+        }
+        tb.innerHTML = list
+          .map(
+            (p) => `
+          <tr>
+            <td class="muted">${fmtDate(p.paid_at)}</td>
+            <td class="muted" style="white-space:nowrap;">${paymentPeriodLabel(p)}</td>
+            <td>${Number(p.amount || 0).toLocaleString()}원</td>
+            <td class="muted">${escapeHtml(p.plan || '-')}</td>
+            <td class="muted">${escapeHtml(p.method || '-')}</td>
+            <td>${p.status === 'refunded' ? '<span class="pill pill-danger">환불</span>' : p.status === 'partial_refunded' ? '<span class="pill pill-danger">부분환불 ' + Number(p.refunded_amount || 0).toLocaleString() + '원</span>' : p.status === 'failed' ? '<span class="pill pill-danger">실패</span>' : '<span class="pill pill-ok">완료</span>'}</td>
+            <td>${canAdminRefund(p) ? `<button type="button" class="btn btn-danger btn-sm" data-refundpay="${p.id}">결제취소</button>` : ''}${!p.payment_id ? `<button type="button" class="btn btn-outline btn-sm" data-delpay="${p.id}">삭제</button>` : ''}</td>
+          </tr>`
+          )
+          .join('');
+        tb.querySelectorAll('[data-refundpay]').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const p = list.find((x) => x.id === btn.getAttribute('data-refundpay'));
+            if (p) openAdminRefundModal(p, { onBack: () => openDetail(uid), onDone: async () => { await refreshUser(uid); onChange(); openDetail(uid); } });
+          });
+        });
+        tb.querySelectorAll('[data-delpay]').forEach((btn) => {
+          btn.addEventListener('click', () => removePayment(uid, btn.getAttribute('data-delpay')));
+        });
+      } catch (e) {
+        tb.innerHTML = `<tr><td colspan="7" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+      }
+    }
+
+    function addMonthsLocal(date, months) {
+      const d = new Date(date.getTime());
+      d.setMonth(d.getMonth() + months);
+      return d;
+    }
+
+    function toDateInput(d) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function parseDateInput(v) {
+      const [y, m, d] = v.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    }
+
+    const MANUAL_PLANS = {
+      monthly: { label: '월간', amount: 3000, months: 1 },
+      annual: { label: '연간', amount: 28000, months: 12 },
+    };
+
+    // 수동 결제 등록 = 결제 기록 + 이용 기간 부여. 이미 이용 중이면 현재 만료일 뒤에 이어 붙이고(기본 시작일),
+    // 이용권이 없거나 만료됐으면 오늘부터 시작한다. 구독기간(종료일)은 플랜에 맞춰 자동 계산된다.
+    function openPaymentEditor(u) {
+      const now = new Date();
+      const activeUntil = u.subscription_status === 'active' && u.next_billing_at && u.next_billing_at.toDate && u.next_billing_at.toDate().getTime() > now.getTime()
+        ? u.next_billing_at.toDate() : null;
+      const defaultStart = activeUntil || now;
+      openModal(`
+        <h3>결제 내역 수동 등록</h3>
+        <p class="form-hint">계좌이체 등으로 직접 확인한 결제를 기록하고, 선택한 플랜만큼 이용 기간을 부여해요(카드 결제는 포트원으로 자동 기록되니 예외적인 경우에만 사용해 주세요).</p>
+        <div class="form-field"><label>결제일</label><input type="date" id="fPaidAt" value="${toDateInput(now)}"></div>
+        <div class="form-field">
+          <label>플랜</label>
+          <select id="fPlan">
+            <option value="monthly">월간 (monthly)</option>
+            <option value="annual">연간 (annual)</option>
+          </select>
+        </div>
+        <div class="form-field"><label>금액 (원)</label><input type="number" id="fAmount" value="3000"></div>
+        <div class="form-field">
+          <label>구독 시작일</label>
+          <input type="date" id="fStart" value="${toDateInput(defaultStart)}">
+          <p class="form-hint">${activeUntil ? '현재 이용 만료일(' + fmtDate(u.next_billing_at) + ') 뒤에 이어 붙도록 기본값이 잡혀요.' : '현재 이용 중인 기간이 없어 오늘부터 시작해요.'}</p>
+        </div>
+        <div class="form-field"><label>구독 종료일 (자동 계산)</label><input type="text" id="fEnd" disabled></div>
+        <div class="form-field">
+          <label>결제 방법</label>
+          <select id="fMethod">
+            <option value="계좌이체">계좌이체</option>
+            <option value="카드">카드</option>
+            <option value="기타">기타</option>
+          </select>
+        </div>
+        <div class="form-field"><label>메모 (선택)</label><input type="text" id="fMemo" placeholder="선택 입력"></div>
+        <p class="form-hint" id="fEffect"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+          <button type="button" class="btn btn-primary" id="saveBtn">등록</button>
+        </div>
+      `);
+      const planEl = document.getElementById('fPlan');
+      const amountEl = document.getElementById('fAmount');
+      const startEl = document.getElementById('fStart');
+      const endEl = document.getElementById('fEnd');
+      const effectEl = document.getElementById('fEffect');
+      const currentEnd = () => {
+        const start = startEl.value ? parseDateInput(startEl.value) : null;
+        return start ? addMonthsLocal(start, MANUAL_PLANS[planEl.value].months) : null;
+      };
+      function refresh() {
+        const end = currentEnd();
+        endEl.value = end ? toDateInput(end).replace(/-/g, '.') : '-';
+        effectEl.textContent = end
+          ? `등록하면 이 회원은 ${endEl.value}까지 이용할 수 있고, 카드 자동결제는 종료돼요(자동 갱신 없음).`
+          : '';
+      }
+      planEl.addEventListener('change', () => {
+        amountEl.value = MANUAL_PLANS[planEl.value].amount;
+        refresh();
+      });
+      startEl.addEventListener('change', refresh);
+      refresh();
+
+      document.getElementById('cancelBtn').addEventListener('click', () => openDetail(u.id));
+      document.getElementById('saveBtn').addEventListener('click', async () => {
+        const paidAtVal = document.getElementById('fPaidAt').value;
+        const amount = Number(amountEl.value);
+        const plan = planEl.value;
+        const method = document.getElementById('fMethod').value;
+        const memo = document.getElementById('fMemo').value.trim();
+        const periodStart = startEl.value ? parseDateInput(startEl.value) : null;
+        const periodEnd = currentEnd();
+        if (!paidAtVal || !amount || !periodStart || !periodEnd) {
+          toast('결제일, 금액, 구독 시작일을 입력해 주세요.', true);
+          return;
+        }
+        const saveBtn = document.getElementById('saveBtn');
+        saveBtn.disabled = true;
+        try {
+          // 서버가 관리자 확인 후 결제 기록을 만들고 이용 기간(기존 만료일 뒤에 이어 붙임)을 반영한다.
+          const result = await adminManualPayment({
+            action: 'create', uid: u.id, paidAt: paidAtVal, plan, amount, method, memo,
+            startDate: startEl.value,
+          });
+          await refreshUser(u.id);
+          toast('결제내역을 등록하고 이용 기간을 반영했어요.');
+          onChange();
+          openDetail(u.id);
+        } catch (e) {
+          saveBtn.disabled = false;
+          toast('등록하지 못했어요: ' + (e.message || e), true);
+        }
+      });
+    }
+
+    function removePayment(uid, paymentId) {
+      openModal(`
+        <h3>결제내역 삭제</h3>
+        <p>이 수동 등록 결제 기록을 삭제할까요? 이 결제로 부여된 이용 기간도 함께 회수되고, 뒤에 이어 붙은 결제 기간은 앞으로 당겨져요. 되돌릴 수 없어요.</p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-outline" id="cancelBtn">취소</button>
+          <button type="button" class="btn btn-danger" id="confirmBtn">삭제</button>
+        </div>
+      `);
+      document.getElementById('cancelBtn').addEventListener('click', () => openDetail(uid));
+      document.getElementById('confirmBtn').addEventListener('click', async () => {
+        try {
+          const result = await adminManualPayment({ action: 'delete', paymentDocId: paymentId });
+          // 이용 기간이 회수됐을 수 있으니 회원 정보를 다시 불러온다.
+          await refreshUser(uid);
+          onChange();
+          toast(result.periodAdjusted ? '삭제하고 이용 기간을 되돌렸어요.' : '삭제했어요.');
+          openDetail(uid);
+        } catch (e) {
+          toast('삭제하지 못했어요: ' + (e.message || e), true);
+        }
+      });
+    }
+
+  return { openDetail };
+}
