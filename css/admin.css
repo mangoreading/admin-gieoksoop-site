@@ -169,6 +169,32 @@ h1,h2,h3{color:var(--navy);}
 .modal{background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow);max-width:520px;width:100%;max-height:88vh;overflow-y:auto;padding:28px;}
 .modal.modal-lg{max-width:920px;max-height:92vh;}
 .modal h3{margin:0 0 18px;font-size:18px;}
+/* 결제취소 모달 */
+.btn-danger-solid{background:var(--danger);color:#fff;border:1.5px solid var(--danger);}
+.btn-danger-solid:hover{filter:brightness(.92);}
+.btn-danger-solid:disabled{opacity:.6;cursor:not-allowed;}
+.rf-warn{background:var(--danger-bg);color:var(--danger);border-radius:10px;padding:10px 14px;font-size:13px;font-weight:600;line-height:1.5;margin:0 0 14px;}
+.rf-info{background:var(--paper);border:1px solid var(--border);border-radius:10px;padding:6px 14px;margin:0 0 18px;}
+.rf-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:7px 0;font-size:13.5px;color:var(--ink-dim);}
+.rf-row:not(:last-child){border-bottom:1px dashed var(--border);}
+.rf-row b{color:var(--ink);font-weight:600;}
+.rf-row.rf-strong b{color:var(--danger);font-size:15px;}
+.rf-row.rf-id{font-size:12px;}
+.rf-row.rf-id b{font-weight:400;color:var(--ink-faint);word-break:break-all;text-align:right;}
+.rf-amount{display:flex;align-items:center;gap:8px;}
+.rf-amount input{flex:1;min-width:0;text-align:right;}
+.rf-unit{font-size:14px;color:var(--ink-dim);}
+.rf-req{font-size:11px;font-weight:700;color:var(--danger);margin-left:4px;}
+.rf-check{display:flex;gap:10px;align-items:flex-start;background:var(--paper);border:1px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;margin:0 0 4px;}
+.rf-check input[type="checkbox"]{width:auto;margin:3px 0 0;flex:0 0 auto;}
+.rf-check b{display:block;font-size:13.5px;color:var(--ink);}
+.rf-check-desc{display:block;font-size:12px;color:var(--ink-faint);line-height:1.6;margin-top:3px;}
+.rf-done{text-align:center;}
+.rf-done-icon{width:52px;height:52px;margin:4px auto 14px;border-radius:50%;background:var(--danger);color:#fff;font-size:26px;line-height:52px;font-weight:700;}
+.rf-done h3{margin:0 0 8px;}
+.rf-done-sub{font-size:13px;color:var(--ink-dim);margin:0 0 18px;line-height:1.6;}
+.rf-done .rf-info{text-align:left;}
+.rf-done .modal-actions{justify-content:center;}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;}
 
 /* 회원 상세: 좌(회원정보)/우(구독정보) 2단 블록 */

@@ -134,11 +134,18 @@ export function openModal(html, opts = {}) {
   document.getElementById("adminModalOverlay").classList.add("open");
 }
 
+// 모달이 닫힐 때(확인 버튼이든 바깥 클릭이든) 한 번 실행할 후속 동작 -- 예: 결제취소 완료 화면을 본 뒤 목록 갱신.
+let afterCloseHook = null;
 export function closeModal() {
   document.getElementById("adminModalOverlay").classList.remove("open");
   const modal = document.getElementById("adminModal");
   modal.innerHTML = "";
   modal.className = "modal";
+  if (afterCloseHook) {
+    const fn = afterCloseHook;
+    afterCloseHook = null;
+    try { fn(); } catch (e) { console.error(e); }
+  }
 }
 
 // ---- 관리자 카드 취소(환불) ----
@@ -195,17 +202,51 @@ export function openAdminRefundModal(p, opts = {}) {
   const back = () => (opts.onBack ? opts.onBack() : closeModal());
   openModal(`
     <h3>결제취소</h3>
-    <p class="form-hint">실제 카드 승인이 취소(환불)돼요. 되돌릴 수 없으니 금액을 꼭 확인해 주세요.</p>
-    <p class="muted" style="font-size:13px;">결제금액 ${total.toLocaleString()}원 · 이미 취소 ${already.toLocaleString()}원 · 취소 가능 ${cancellable.toLocaleString()}원<br>결제번호 ${escapeHtml(p.payment_id)}</p>
-    <div class="form-field"><label>취소 금액 (원)</label><input type="number" id="rfAmount" min="1" max="${cancellable}" value="${cancellable}"></div>
-    <div class="form-field"><label>취소 사유 (필수)</label><input type="text" id="rfReason" placeholder="예: 고객 요청, 테스트 결제"></div>
-    <div class="form-field"><label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="rfEnd" checked> 이 결제로 부여된 이용 기간도 함께 회수</label>
-      <p class="form-hint">체크하면 이 결제가 준 이용 기간이 줄어들고(일부 금액만 취소해도 전부 회수), 뒤에 이어 붙은 결제 기간은 앞으로 당겨져요. 남는 이용 기간이 없으면 구독이 종료돼요. 체크하지 않으면 돈만 환불하고 이용 기간은 그대로 유지돼요.</p></div>
+    <div class="rf-warn">실제 카드 승인이 취소(환불)돼요. 되돌릴 수 없으니 금액을 꼭 확인해 주세요.</div>
+    <div class="rf-info">
+      <div class="rf-row"><span>결제금액</span><b>${total.toLocaleString()}원</b></div>
+      <div class="rf-row"><span>이미 취소</span><b>${already.toLocaleString()}원</b></div>
+      <div class="rf-row rf-strong"><span>취소 가능</span><b>${cancellable.toLocaleString()}원</b></div>
+      <div class="rf-row rf-id"><span>결제번호</span><b>${escapeHtml(p.payment_id)}</b></div>
+    </div>
+    <div class="form-field">
+      <label for="rfAmount">취소 금액</label>
+      <div class="rf-amount">
+        <input type="number" id="rfAmount" min="1" max="${cancellable}" value="${cancellable}">
+        <span class="rf-unit">원</span>
+        <button type="button" class="btn btn-outline btn-sm" id="rfFullBtn">전액</button>
+      </div>
+      <p class="form-hint" id="rfRemain"></p>
+    </div>
+    <div class="form-field">
+      <label for="rfReason">취소 사유 <span class="rf-req">필수</span></label>
+      <input type="text" id="rfReason" placeholder="예: 고객 요청, 테스트 결제">
+    </div>
+    <label class="rf-check">
+      <input type="checkbox" id="rfEnd" checked>
+      <span>
+        <b>이용 기간도 함께 회수</b>
+        <span class="rf-check-desc">이 결제로 부여된 이용 기간을 줄이고(일부 금액만 취소해도 전부 회수), 뒤에 이어 붙은 결제 기간은 앞으로 당겨요. 남는 기간이 없으면 구독이 종료돼요. 체크 해제 시 돈만 환불하고 이용 기간은 그대로 유지돼요.</span>
+      </span>
+    </label>
     <div class="modal-actions">
       <button type="button" class="btn btn-outline" id="rfCancelBtn">닫기</button>
-      <button type="button" class="btn btn-danger" id="rfConfirmBtn">결제취소하기</button>
+      <button type="button" class="btn btn-danger-solid" id="rfConfirmBtn">결제취소하기</button>
     </div>
   `);
+  const rfAmountEl = document.getElementById("rfAmount");
+  const rfRemainEl = document.getElementById("rfRemain");
+  const updateRemain = () => {
+    const v = Number(rfAmountEl.value) || 0;
+    if (v < 1 || v > cancellable) {
+      rfRemainEl.textContent = `1원 ~ ${cancellable.toLocaleString()}원 사이로 입력해 주세요.`;
+    } else {
+      rfRemainEl.textContent = v === cancellable ? "전액 취소 · 취소 후 남는 결제금액 0원" : `일부 취소 · 취소 후 남는 결제금액 ${(total - already - v).toLocaleString()}원`;
+    }
+  };
+  rfAmountEl.addEventListener("input", updateRemain);
+  document.getElementById("rfFullBtn").addEventListener("click", () => { rfAmountEl.value = cancellable; updateRemain(); });
+  updateRemain();
   document.getElementById("rfCancelBtn").addEventListener("click", back);
   document.getElementById("rfConfirmBtn").addEventListener("click", async () => {
     const amount = Number(document.getElementById("rfAmount").value);
@@ -234,9 +275,27 @@ export function openAdminRefundModal(p, opts = {}) {
         const msg = REFUND_ERRORS[data.error] || data.error || "HTTP " + res.status;
         throw new Error(msg + (data.detail ? " (" + data.detail + ")" : ""));
       }
-      toast(`${Number(data.refundedAmount).toLocaleString()}원 결제취소를 완료했어요.`);
-      if (opts.onDone) opts.onDone(data);
-      else closeModal();
+      const refunded = Number(data.refundedAmount) || amount;
+      toast(`${refunded.toLocaleString()}원 결제취소를 완료했어요.`);
+      // 팝업을 바로 닫지 않고 "취소 완료" 화면으로 바꾼다. 확인(또는 바깥 클릭)으로 닫힐 때 후속 동작(목록 갱신)을 실행한다.
+      const remain = Math.max(0, total - already - refunded);
+      openModal(`
+        <div class="rf-done">
+          <div class="rf-done-icon">✓</div>
+          <h3>결제취소가 완료됐어요</h3>
+          <p class="rf-done-sub">카드 승인이 취소(환불)됐어요. 카드사에 따라 반영까지 영업일 기준 수일이 걸릴 수 있어요.</p>
+          <div class="rf-info">
+            <div class="rf-row rf-strong"><span>취소 금액</span><b>${refunded.toLocaleString()}원</b></div>
+            <div class="rf-row"><span>취소 후 남는 결제금액</span><b>${remain.toLocaleString()}원</b></div>
+            <div class="rf-row"><span>이용 기간</span><b>${revokePeriod ? "회수함" : "그대로 유지"}</b></div>
+            <div class="rf-row"><span>사유</span><b>${escapeHtml(reason)}</b></div>
+            <div class="rf-row rf-id"><span>결제번호</span><b>${escapeHtml(p.payment_id)}</b></div>
+          </div>
+          <div class="modal-actions"><button type="button" class="btn btn-primary" id="rfDoneBtn">확인</button></div>
+        </div>
+      `);
+      afterCloseHook = opts.onDone ? () => opts.onDone(data) : null;
+      document.getElementById("rfDoneBtn").addEventListener("click", closeModal);
     } catch (e) {
       toast("취소하지 못했어요: " + (e.message || e), true);
       btn.disabled = false;
