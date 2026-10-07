@@ -193,12 +193,85 @@ export function canAdminRefund(p) {
   return !!p.payment_id && (status === "paid" || status === "partial_refunded");
 }
 
+// ---- 정책 환불액(이용약관 제7조) -- 서버 worker/src/payments.js computeAnnualRefund 와 같은 규칙 ----
+const RF_KST = 9 * 3600 * 1000;
+const RF_DAY = 24 * 3600 * 1000;
+const RF_ANNUAL_PRICE = 28000;
+const RF_MONTHLY_PRICE = 3000;
+const rfKstFmt = (d) => {
+  const k = new Date(d.getTime() + RF_KST);
+  return `${k.getUTCFullYear()}.${String(k.getUTCMonth() + 1).padStart(2, "0")}.${String(k.getUTCDate()).padStart(2, "0")}`;
+};
+const rfMonthDiff = (a, b) => {
+  const x = new Date(a.getTime() + RF_KST), y = new Date(b.getTime() + RF_KST);
+  return (y.getUTCFullYear() - x.getUTCFullYear()) * 12 + (y.getUTCMonth() - x.getUTCMonth());
+};
+const rfAddMonths = (date, months) => {
+  const k = new Date(date.getTime() + RF_KST);
+  const total = k.getUTCFullYear() * 12 + k.getUTCMonth() + months;
+  const y = Math.floor(total / 12), m = ((total % 12) + 12) % 12;
+  const dim = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(y, m, Math.min(k.getUTCDate(), dim), k.getUTCHours(), k.getUTCMinutes(), k.getUTCSeconds()) - RF_KST);
+};
+const rfToDate = (ts) => (ts && typeof ts.toDate === "function" ? ts.toDate() : null);
+
+// 연간 결제 한 건의 정책 환불액. 연간이 아니거나 시작일을 알 수 없으면 null.
+function policyRefund(p, u, now) {
+  if (p.plan !== "annual") return null;
+  const paidAt = rfToDate(p.paid_at);
+  const start = rfToDate(p.period_start) || paidAt;
+  if (!start) return null;
+  const price = Number(p.amount) || RF_ANNUAL_PRICE;
+  if (now.getTime() <= start.getTime()) return { mode: "before_start", amount: price, start };
+  const lastLogin = u ? rfToDate(u.app_last_login_at) : null;
+  const usedAfterPay = !!(lastLogin && paidAt && lastLogin.getTime() > paidAt.getTime()) || !!(u && u.paid_feature_used_at);
+  if (paidAt && now.getTime() - paidAt.getTime() <= 7 * RF_DAY && !usedAfterPay) {
+    return { mode: "within_7days", amount: price, start };
+  }
+  let m = rfMonthDiff(start, now);
+  let anchor = rfAddMonths(start, m);
+  if (anchor.getTime() > now.getTime()) { m -= 1; anchor = rfAddMonths(start, m); }
+  const used = Math.max(1, anchor.getTime() === now.getTime() ? m : m + 1);
+  return { mode: "prorated", amount: Math.max(0, price - used * RF_MONTHLY_PRICE), used, start, keepUntil: rfAddMonths(start, used), usedAfterPay };
+}
+
 // p: payments 문서({id, payment_id, amount, refunded_amount, plan ...}).
 // opts.onDone: 취소 성공 후 호출, opts.onBack: [닫기] 눌렀을 때 호출(없으면 모달 닫기).
-export function openAdminRefundModal(p, opts = {}) {
+export async function openAdminRefundModal(p, opts = {}) {
   const total = Number(p.amount || 0);
   const already = Number(p.refunded_amount || 0);
   const cancellable = Math.max(0, total - already);
+  // 정책 환불액 계산에 쓰는 회원 정보(앱 로그인 기록 등)
+  let userDoc = opts.user || null;
+  if (!userDoc && p.uid) {
+    try {
+      const s = await getDoc(doc(db, "users", p.uid));
+      if (s.exists()) userDoc = s.data();
+    } catch (e) { console.error(e); }
+  }
+  const policy = policyRefund(p, userDoc, new Date());
+  // 정책 금액에서 이미 취소한 금액을 뺀 값 -- 이번에 취소할 금액의 기본값
+  const policyAmount = policy ? Math.min(cancellable, Math.max(0, policy.amount - already)) : null;
+  const defaultAmount = policyAmount !== null ? policyAmount : cancellable;
+  // 이용 기간 처리 기본값: 약관상 사용 개월이 있으면 "사용한 달까지만 유지", 그 외는 "전부 회수"
+  const usedAvailable = !!(policy && policy.mode === "prorated");
+  const defaultPeriodMode = usedAvailable ? "used" : "all";
+  const usedUntilLabel = usedAvailable ? rfKstFmt(new Date(policy.keepUntil.getTime() - RF_DAY)) : "";
+  let policyHtml = "";
+  if (policy) {
+    const lines = {
+      before_start: `이용 시작 전이에요(시작 ${rfKstFmt(policy.start)}) → <b>전액 환불</b>`,
+      within_7days: `결제 후 7일 이내이고 앱 로그인 기록이 없어요 → <b>전액 환불</b>`,
+      prorated: `사용 <b>${policy.used}개월</b>(시작 ${rfKstFmt(policy.start)}${policy.usedAfterPay ? " · 결제 후 앱 로그인 기록 있음" : ""}) → ${RF_ANNUAL_PRICE.toLocaleString()}원 − ${policy.used} × ${RF_MONTHLY_PRICE.toLocaleString()}원`,
+    }[policy.mode];
+    const extra = policy.mode === "prorated"
+      ? `<div class="rf-policy-sub">정책상 취소해도 사용한 달(${rfKstFmt(new Date(policy.keepUntil.getTime() - RF_DAY))}까지)은 계속 이용할 수 있어요.</div>`
+      : "";
+    const already_note = already > 0 ? `<div class="rf-policy-sub">정책 금액 ${policy.amount.toLocaleString()}원에서 이미 취소한 ${already.toLocaleString()}원을 뺀 금액이에요.</div>` : "";
+    policyHtml = `<div class="rf-policy"><div class="rf-policy-title">정책 기준 환불액 <b>${policyAmount.toLocaleString()}원</b></div><div class="rf-policy-sub">${lines}</div>${extra}${already_note}</div>`;
+  } else if (p.plan === "monthly") {
+    policyHtml = `<div class="rf-policy rf-policy-muted"><div class="rf-policy-sub">월간 결제는 약관상 이미 결제한 기간의 환불이 없어요. 예외로 환불하려면 금액을 직접 입력해 주세요.</div></div>`;
+  }
   const back = () => (opts.onBack ? opts.onBack() : closeModal());
   openModal(`
     <h3>결제취소</h3>
@@ -209,11 +282,13 @@ export function openAdminRefundModal(p, opts = {}) {
       <div class="rf-row rf-strong"><span>취소 가능</span><b>${cancellable.toLocaleString()}원</b></div>
       <div class="rf-row rf-id"><span>결제번호</span><b>${escapeHtml(p.payment_id)}</b></div>
     </div>
+    ${policyHtml}
     <div class="form-field">
       <label for="rfAmount">취소 금액</label>
       <div class="rf-amount">
-        <input type="number" id="rfAmount" min="1" max="${cancellable}" value="${cancellable}">
+        <input type="number" id="rfAmount" min="1" max="${cancellable}" value="${defaultAmount}">
         <span class="rf-unit">원</span>
+        ${policy ? '<button type="button" class="btn btn-outline btn-sm" id="rfPolicyBtn">정책 금액</button>' : ''}
         <button type="button" class="btn btn-outline btn-sm" id="rfFullBtn">전액</button>
       </div>
       <p class="form-hint" id="rfRemain"></p>
@@ -222,13 +297,21 @@ export function openAdminRefundModal(p, opts = {}) {
       <label for="rfReason">취소 사유 <span class="rf-req">필수</span></label>
       <input type="text" id="rfReason" placeholder="예: 고객 요청, 테스트 결제">
     </div>
-    <label class="rf-check">
-      <input type="checkbox" id="rfEnd" checked>
-      <span>
-        <b>이용 기간도 함께 회수</b>
-        <span class="rf-check-desc">이 결제로 부여된 이용 기간을 줄이고(일부 금액만 취소해도 전부 회수), 뒤에 이어 붙은 결제 기간은 앞으로 당겨요. 남는 기간이 없으면 구독이 종료돼요. 체크 해제 시 돈만 환불하고 이용 기간은 그대로 유지돼요.</span>
-      </span>
-    </label>
+    <div class="form-field rf-period">
+      <label>이용 기간 처리</label>
+      <label class="rf-opt">
+        <input type="radio" name="rfPeriod" value="all" ${defaultPeriodMode === "all" ? "checked" : ""}>
+        <span><b>이 결제의 이용 기간 전부 회수</b><span class="rf-check-desc">이 결제로 부여된 기간을 모두 없애고, 뒤에 이어 붙은 결제 기간은 앞으로 당겨요. 남는 기간이 없으면 구독이 종료돼요.</span></span>
+      </label>
+      ${usedAvailable ? `<label class="rf-opt">
+        <input type="radio" name="rfPeriod" value="used" ${defaultPeriodMode === "used" ? "checked" : ""}>
+        <span><b>사용한 달까지만 유지 <span class="rf-tag">정책</span></b><span class="rf-check-desc">사용 ${policy.used}개월(~${usedUntilLabel})만 남기고 이후 기간은 회수해요. 약관의 환불 기준과 같은 처리예요.</span></span>
+      </label>` : ""}
+      <label class="rf-opt">
+        <input type="radio" name="rfPeriod" value="none">
+        <span><b>이용 기간 그대로 유지</b><span class="rf-check-desc">돈만 환불하고 이용 기간은 줄이지 않아요.</span></span>
+      </label>
+    </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-outline" id="rfCancelBtn">닫기</button>
       <button type="button" class="btn btn-danger-solid" id="rfConfirmBtn">결제취소하기</button>
@@ -246,12 +329,14 @@ export function openAdminRefundModal(p, opts = {}) {
   };
   rfAmountEl.addEventListener("input", updateRemain);
   document.getElementById("rfFullBtn").addEventListener("click", () => { rfAmountEl.value = cancellable; updateRemain(); });
+  const rfPolicyBtn = document.getElementById("rfPolicyBtn");
+  if (rfPolicyBtn) rfPolicyBtn.addEventListener("click", () => { rfAmountEl.value = policyAmount; updateRemain(); });
   updateRemain();
   document.getElementById("rfCancelBtn").addEventListener("click", back);
   document.getElementById("rfConfirmBtn").addEventListener("click", async () => {
     const amount = Number(document.getElementById("rfAmount").value);
     const reason = document.getElementById("rfReason").value.trim();
-    const revokePeriod = document.getElementById("rfEnd").checked;
+    const periodMode = (document.querySelector('input[name="rfPeriod"]:checked') || {}).value || "none";
     if (!amount || amount < 1 || amount > cancellable) {
       toast("취소 금액을 확인해 주세요.", true);
       return;
@@ -268,7 +353,7 @@ export function openAdminRefundModal(p, opts = {}) {
       const res = await fetch(ADMIN_REFUND_URL, {
         method: "POST",
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId: p.payment_id, amount, reason, revokePeriod }),
+        body: JSON.stringify({ paymentId: p.payment_id, amount, reason, periodMode }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.ok) {
@@ -279,6 +364,10 @@ export function openAdminRefundModal(p, opts = {}) {
       toast(`${refunded.toLocaleString()}원 결제취소를 완료했어요.`);
       // 팝업을 바로 닫지 않고 "취소 완료" 화면으로 바꾼다. 확인(또는 바깥 클릭)으로 닫힐 때 후속 동작(목록 갱신)을 실행한다.
       const remain = Math.max(0, total - already - refunded);
+      const kept = Number(data.keptMonths) || 0;
+      const periodLabel = data.periodMode === "none" ? "그대로 유지"
+        : kept > 0 ? `사용한 ${kept}개월까지 유지` + (data.validUntil ? ` (~${rfKstFmt(new Date(new Date(data.validUntil).getTime() - RF_DAY))})` : "")
+        : data.accessEnded ? "전부 회수 · 구독 종료" : "전부 회수";
       openModal(`
         <div class="rf-done">
           <div class="rf-done-icon">✓</div>
@@ -287,7 +376,7 @@ export function openAdminRefundModal(p, opts = {}) {
           <div class="rf-info">
             <div class="rf-row rf-strong"><span>취소 금액</span><b>${refunded.toLocaleString()}원</b></div>
             <div class="rf-row"><span>취소 후 남는 결제금액</span><b>${remain.toLocaleString()}원</b></div>
-            <div class="rf-row"><span>이용 기간</span><b>${revokePeriod ? "회수함" : "그대로 유지"}</b></div>
+            <div class="rf-row"><span>이용 기간</span><b>${periodLabel}</b></div>
             <div class="rf-row"><span>사유</span><b>${escapeHtml(reason)}</b></div>
             <div class="rf-row rf-id"><span>결제번호</span><b>${escapeHtml(p.payment_id)}</b></div>
           </div>
