@@ -154,8 +154,8 @@
         <label>유료 결제내역</label>
         <div style="overflow-x:auto;">
           <table class="data-table" style="font-size:13px;">
-            <thead><tr><th>결제일</th><th>금액</th><th>플랜</th><th>방법</th><th>상태</th><th></th></tr></thead>
-            <tbody id="paymentsTbody"><tr><td colspan="6" class="empty-row">불러오는 중...</td></tr></tbody>
+            <thead><tr><th>결제일</th><th>구독기간</th><th>금액</th><th>플랜</th><th>방법</th><th>상태</th><th></th></tr></thead>
+            <tbody id="paymentsTbody"><tr><td colspan="7" class="empty-row">불러오는 중...</td></tr></tbody>
           </table>
         </div>
         <button type="button" class="btn btn-outline btn-sm" id="addPaymentBtn" style="margin-top:10px;">+ 결제 내역 수동 등록</button>
@@ -249,6 +249,21 @@
     });
   }
 
+  // 결제별 구독기간. 새 결제는 서버가 period_start/period_end를 저장하고, 예전 기록(저장값 없음)은
+  // 결제일 기준으로 월간 1개월/연간 12개월을 추정해 "(추정)"으로 표시한다(연간을 이어 붙인 건은 실제와 다를 수 있음).
+  function paymentPeriodLabel(p) {
+    if (p.period_start && p.period_start.toDate && p.period_end && p.period_end.toDate) {
+      return `${fmtDate(p.period_start)} ~ ${fmtDate(p.period_end)}`;
+    }
+    if (p.paid_at && p.paid_at.toDate && p.payment_id && (p.plan === 'monthly' || p.plan === 'annual')) {
+      const start = p.paid_at.toDate();
+      const end = new Date(start.getTime());
+      end.setMonth(end.getMonth() + (p.plan === 'annual' ? 12 : 1));
+      return `${fmtDate(p.paid_at)} ~ ${fmtDate({ toDate: () => end })} <span style="font-size:11px;">(추정)</span>`;
+    }
+    return '-';
+  }
+
   async function loadPayments(uid) {
     const tb = document.getElementById('paymentsTbody');
     if (!tb) return;
@@ -261,7 +276,7 @@
         return tb2 - ta;
       });
       if (list.length === 0) {
-        tb.innerHTML = `<tr><td colspan="6" class="empty-row">등록된 결제내역이 없어요.</td></tr>`;
+        tb.innerHTML = `<tr><td colspan="7" class="empty-row">등록된 결제내역이 없어요.</td></tr>`;
         return;
       }
       tb.innerHTML = list
@@ -269,6 +284,7 @@
           (p) => `
         <tr>
           <td class="muted">${fmtDate(p.paid_at)}</td>
+          <td class="muted" style="white-space:nowrap;">${paymentPeriodLabel(p)}</td>
           <td>${Number(p.amount || 0).toLocaleString()}원</td>
           <td class="muted">${escapeHtml(p.plan || '-')}</td>
           <td class="muted">${escapeHtml(p.method || '-')}</td>
@@ -287,7 +303,7 @@
         btn.addEventListener('click', () => removePayment(uid, btn.getAttribute('data-delpay')));
       });
     } catch (e) {
-      tb.innerHTML = `<tr><td colspan="6" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="7" class="empty-row">불러오지 못했어요: ${escapeHtml(e.message || String(e))}</td></tr>`;
     }
   }
 

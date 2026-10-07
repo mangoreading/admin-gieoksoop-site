@@ -172,7 +172,7 @@ h1,h2,h3{color:var(--navy);}
 .modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px;}
 
 /* 회원 상세: 좌(회원정보)/우(구독정보) 2단 블록 */
-.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;}
 .detail-block{border:1px solid var(--border);border-radius:14px;padding:18px 18px 4px;background:var(--paper);}
 .detail-block h4{margin:0 0 14px;font-size:15px;}
 .detail-block .form-field input:disabled{background:var(--surface);}
