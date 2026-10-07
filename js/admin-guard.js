@@ -302,21 +302,32 @@ export async function openAdminRefundModal(p, opts = {}) {
       <label class="rf-opt">
         <input type="radio" name="rfPeriod" value="all" ${defaultPeriodMode === "all" ? "checked" : ""}>
         <span><b>이 결제의 이용 기간 전부 회수</b><span class="rf-check-desc">이 결제로 부여된 기간을 모두 없애고, 뒤에 이어 붙은 결제 기간은 앞으로 당겨요. 남는 기간이 없으면 구독이 종료돼요.</span></span>
-      </label>
+      <button type="button" class="rf-more" aria-expanded="false">설명 <i>▾</i></button></label>
       ${usedAvailable ? `<label class="rf-opt">
         <input type="radio" name="rfPeriod" value="used" ${defaultPeriodMode === "used" ? "checked" : ""}>
         <span><b>사용한 달까지만 유지 <span class="rf-tag">정책</span></b><span class="rf-check-desc">사용 ${policy.used}개월(~${usedUntilLabel})만 남기고 이후 기간은 회수해요. 약관의 환불 기준과 같은 처리예요.</span></span>
-      </label>` : ""}
+      <button type="button" class="rf-more" aria-expanded="false">설명 <i>▾</i></button></label>` : ""}
       <label class="rf-opt">
         <input type="radio" name="rfPeriod" value="none">
         <span><b>이용 기간 그대로 유지</b><span class="rf-check-desc">돈만 환불하고 이용 기간은 줄이지 않아요.</span></span>
-      </label>
+      <button type="button" class="rf-more" aria-expanded="false">설명 <i>▾</i></button></label>
     </div>
     <div class="modal-actions">
       <button type="button" class="btn btn-outline" id="rfCancelBtn">닫기</button>
       <button type="button" class="btn btn-danger-solid" id="rfConfirmBtn">결제취소하기</button>
     </div>
   `);
+  // 이용 기간 처리 옵션: 설명은 기본으로 접어 두고, 오른쪽 [설명] 버튼으로 펼치고 닫는다.
+  document.querySelectorAll(".rf-opt .rf-more").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const opt = btn.closest(".rf-opt");
+      const open = opt.classList.toggle("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.querySelector("i").textContent = open ? "▴" : "▾";
+    });
+  });
   const rfAmountEl = document.getElementById("rfAmount");
   const rfRemainEl = document.getElementById("rfRemain");
   const updateRemain = () => {
