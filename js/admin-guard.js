@@ -162,7 +162,7 @@ const REFUND_ERRORS = {
   nothing_to_cancel: "취소할 수 있는 금액이 남아있지 않아요.",
   invalid_amount: "취소 금액이 올바르지 않아요.",
   payment_record_not_found: "결제 기록을 찾지 못했어요.",
-  portone_cancel_failed: "카드사(포트원) 취소 요청이 실패했어요.",
+  portone_cancel_failed: "카드사(포트원) 취소 요청이 실패했어요. 이미 카드사에서 취소된 거래일 수 있어요(테스트 채널은 결제 후 자동 취소돼요).",
 };
 
 // 수동 결제 등록/삭제(서버가 관리자 검증 후 결제 기록 + 이용 기간을 함께 처리한다).
@@ -365,12 +365,25 @@ export async function openAdminRefundModal(p, opts = {}) {
     btn.textContent = "취소 처리 중...";
     try {
       const token = await auth.currentUser.getIdToken();
-      const res = await fetch(ADMIN_REFUND_URL, {
-        method: "POST",
-        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId: p.payment_id, amount, reason, periodMode }),
-      });
-      const data = await res.json().catch(() => ({}));
+      const callRefund = async (extra) => {
+        const r = await fetch(ADMIN_REFUND_URL, {
+          method: "POST",
+          headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+          body: JSON.stringify({ paymentId: p.payment_id, amount, reason, periodMode, ...(extra || {}) }),
+        });
+        return { res: r, data: await r.json().catch(() => ({})) };
+      };
+      let { res, data } = await callRefund();
+      // 카드사(PG)에서 이미 취소된 거래일 수 있는 실패: 확인했다면 우리 기록만 취소 처리할 수 있게 물어본다.
+      if (!res.ok && data && data.pgMaybeAlreadyCancelled) {
+        const ok = window.confirm(
+          "카드사 취소 요청이 실패했어요" + (data.detail ? " (" + data.detail + ")" : "") + ".\n\n" +
+          "카드사에서 이미 취소된 거래일 수 있어요(예: 테스트 채널 자동 취소, 카드사에서 직접 취소).\n" +
+          "포트원 콘솔/카드사에서 이미 취소된 것을 확인했다면, 카드 취소 없이 우리 결제 기록과 이용 기간만 취소 처리할 수 있어요.\n\n" +
+          "기록만 취소 처리할까요?"
+        );
+        if (ok) ({ res, data } = await callRefund({ confirmPgAlreadyCancelled: true }));
+      }
       if (!res.ok || !data.ok) {
         const msg = REFUND_ERRORS[data.error] || data.error || "HTTP " + res.status;
         throw new Error(msg + (data.detail ? " (" + data.detail + ")" : ""));
@@ -387,7 +400,7 @@ export async function openAdminRefundModal(p, opts = {}) {
         <div class="rf-done">
           <div class="rf-done-icon">✓</div>
           <h3>결제취소가 완료됐어요</h3>
-          <p class="rf-done-sub">카드 승인이 취소(환불)됐어요. 카드사에 따라 반영까지 영업일 기준 수일이 걸릴 수 있어요.</p>
+          <p class="rf-done-sub">${data.pgSyncedOnly ? "카드사에서 이미 취소된 거래여서 우리 결제 기록과 이용 기간만 취소 처리했어요." : "카드 승인이 취소(환불)됐어요. 카드사에 따라 반영까지 영업일 기준 수일이 걸릴 수 있어요."}</p>
           <div class="rf-info">
             <div class="rf-row rf-strong"><span>취소 금액</span><b>${refunded.toLocaleString()}원</b></div>
             <div class="rf-row"><span>취소 후 남는 결제금액</span><b>${remain.toLocaleString()}원</b></div>
