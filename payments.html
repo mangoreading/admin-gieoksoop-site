@@ -8,6 +8,13 @@
 <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
 <link rel="icon" href="img/apple-touch-icon.png">
 <link rel="stylesheet" href="css/admin.css">
+<style>
+  /* 결제 목록: 열 사이 여백을 줄여 가로 스크롤 없이 한 화면에 들어오게 한다(좁은 화면에서는 기존처럼 스크롤). */
+  #tbody{font-size:13.5px;}
+  .data-table.nowrap th,.data-table.nowrap td{padding-left:11px;padding-right:11px;}
+  .data-table.nowrap th:first-child,.data-table.nowrap td:first-child{padding-left:20px;}
+  .data-table.nowrap th:last-child,.data-table.nowrap td:last-child{padding-right:20px;}
+</style>
 </head>
 <body>
 
