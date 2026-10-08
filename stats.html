@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>방문 통계 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+<style>
+  .st-range{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);}
+  .st-range button{border:none;background:transparent;padding:8px 14px;font:600 13px var(--font);color:var(--ink-dim);cursor:pointer;}
+  .st-range button.on{background:var(--navy);color:#fff;}
+  .st-note{font-size:12.5px;color:var(--ink-faint);margin:0 0 14px;line-height:1.55;}
+  .st-chart{position:relative;width:100%;}
+  .st-chart svg{display:block;width:100%;height:auto;overflow:visible;}
+  .st-chart .gl{stroke:var(--border);stroke-width:1;}
+  .st-chart text{font:11px var(--font);fill:var(--ink-faint);}
+  .st-tip{position:absolute;pointer-events:none;background:var(--navy);color:#fff;border-radius:9px;padding:8px 11px;font-size:12.5px;line-height:1.55;white-space:nowrap;opacity:0;transform:translate(-50%,-100%);transition:opacity .08s;z-index:5;box-shadow:0 6px 20px rgba(0,0,0,.2);}
+  .st-tip b{font-weight:700;}
+  .st-tip .sw{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;}
+  .st-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink-faint);font-size:13.5px;text-align:center;padding:0 24px;pointer-events:none;}
+  .st-legend{display:flex;gap:16px;font-size:12.5px;color:var(--ink-dim);margin-bottom:8px;flex-wrap:wrap;}
+  .st-legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px;}
+  .st-two{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
+  @media (max-width:980px){.st-two{grid-template-columns:1fr;}}
+  .st-bars{display:flex;flex-direction:column;gap:10px;}
+  .st-bar{display:grid;grid-template-columns:minmax(80px,150px) 1fr 56px;align-items:center;gap:10px;font-size:13.5px;}
+  .st-bar .lb{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .st-bar .tr{background:var(--paper);border-radius:6px;height:14px;overflow:hidden;}
+  .st-bar .tr span{display:block;height:100%;border-radius:0 6px 6px 0;background:var(--accent);}
+  .st-bar .vl{text-align:right;color:var(--ink-dim);font-variant-numeric:tabular-nums;}
+  .st-funnel .st-bar{grid-template-columns:minmax(80px,130px) 1fr 104px;}
+  .st-funnel .vl{white-space:nowrap;}
+  .st-funnel .tr span{background:var(--blue);}
+  .st-toggle{border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:5px 10px;font:600 12px var(--font);color:var(--ink-dim);cursor:pointer;}
+  .st-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px;}
+  .st-table th,.st-table td{padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;}
+  .st-table th:first-child,.st-table td:first-child{text-align:left;}
+  .st-table-wrap{max-height:280px;overflow:auto;}
+  .st-sec{font-size:13px;font-weight:700;color:var(--ink-dim);margin:30px 0 12px;letter-spacing:.02em;}
+</style>
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, db, escapeHtml } from './js/admin-guard.js';
+  import { collection, getDocs } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  await guardAdminPage({
+    activeKey: 'stats',
+    title: '방문 통계',
+    desc: '홈페이지 방문과 PC 앱 사용 현황을 익명 집계로 보여줘요. (개인을 특정하는 정보는 저장하지 않아요)',
+  });
+
+  // 통계 서버(gieoksoop-pilot Worker) 주소/키 — error-reports.html 과 같은 값(서버 시크릿 ADMIN_REPORT_KEY 와 동일해야 함).
+  const PILOT_BASE_URL = 'https://gieoksoop-pilot.mangoreading-it.workers.dev';
+  const ADMIN_REPORT_KEY = '186836123d5218539d3655eec43950169350bb66c505e827';
+
+  const C_MAIN = '#cb6b45';   // 주 계열 (accent)
+  const C_SUB = '#2d4a86';    // 보조 계열 (blue)
+  const KST_MS = 9 * 3600 * 1000;
+  const kstDay = (d) => new Date(d.getTime() + KST_MS).toISOString().slice(0, 10);
+  const mmdd = (day) => day.slice(5).replace('-', '.');
+  const fmt = (n) => Number(n || 0).toLocaleString('ko-KR');
+
+  const PATH_LABEL = {
+    '/': '홈', '/guide': '사용가이드', '/pricing': '요금제', '/download': '다운로드', '/notice': '공지사항',
+    '/login': '로그인', '/signup': '회원가입', '/account': '내 계정', '/forgot-password': '비밀번호 찾기',
+    '/terms': '이용약관', '/privacy': '개인정보처리방침', '/other': '기타 페이지',
+  };
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px;">
+      <div class="st-range" id="range">
+        <button data-d="7">7일</button><button data-d="30" class="on">30일</button><button data-d="90">90일</button>
+      </div>
+      <span class="muted" id="asof"></span>
+    </div>
+    <div id="err"></div>
+
+    <div class="stat-grid" id="kpis"></div>
+
+    <div class="panel">
+      <div class="panel-head"><div><h2>방문자 · 페이지뷰 추이</h2><p>날짜는 한국시간 기준이에요.</p></div>
+        <button class="st-toggle" data-table="t1">표로 보기</button></div>
+      <div class="panel-body">
+        <div class="st-legend"><span><i style="background:${C_MAIN}"></i>방문자(명)</span><span><i style="background:${C_SUB}"></i>페이지뷰(회)</span></div>
+        <div class="st-chart" id="c1"></div>
+        <div class="st-table-wrap" id="t1" hidden></div>
+        <p class="st-note" style="margin-top:12px;">방문자는 하루 단위로만 구분하는 익명 값이라, 여러 날 방문한 사람은 날마다 한 명씩 포함돼요. 봇·크롤러, 추적 거부(DNT/GPC) 브라우저는 집계하지 않아요.</p>
+      </div>
+    </div>
+
+    <div class="st-two">
+      <div class="panel">
+        <div class="panel-head"><div><h2>인기 페이지</h2><p>선택한 기간의 페이지뷰</p></div></div>
+        <div class="panel-body"><div class="st-bars" id="pages"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>유입 경로</h2><p>방문 시작(첫 페이지) 기준 · 검색엔진·SNS·AI 검색·직접 방문</p></div></div>
+        <div class="panel-body"><div class="st-bars" id="refs"></div></div>
+      </div>
+    </div>
+
+    <div class="st-two">
+      <div class="panel">
+        <div class="panel-head"><div><h2>신규 가입자 추이</h2><p>회원(Firestore users) 가입일 기준</p></div>
+          <button class="st-toggle" data-table="t2">표로 보기</button></div>
+        <div class="panel-body"><div class="st-chart" id="c2"></div><div class="st-table-wrap" id="t2" hidden></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>가입 전환</h2><p>방문 → 가입 페이지 → 가입 완료</p></div></div>
+        <div class="panel-body">
+          <div class="st-bars st-funnel" id="funnel"></div>
+          <p class="st-note" style="margin-top:14px;" id="funnelNote"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="st-sec">PC 앱 (익명 사용 통계)</div>
+    <div class="stat-grid" id="appKpis"></div>
+    <div class="st-two">
+      <div class="panel">
+        <div class="panel-head"><div><h2>일간 활성 사용자</h2><p>그날 앱을 켠 설치본 수</p></div>
+          <button class="st-toggle" data-table="t3">표로 보기</button></div>
+        <div class="panel-body"><div class="st-chart" id="c3"></div><div class="st-table-wrap" id="t3" hidden></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><div><h2>앱 버전 분포</h2><p>최근 30일 안에 앱을 켠 설치본 기준</p></div></div>
+        <div class="panel-body"><div class="st-bars" id="versions"></div>
+          <p class="st-note" style="margin-top:14px;">설치본 번호는 앱을 처음 실행할 때 만든 임의의 값이라 계정·사람과 연결되지 않아요. 앱을 지웠다 다시 깔면 새 설치로 집계돼요.</p></div>
+      </div>
+    </div>
+  `;
+
+  // ---------- 차트 ----------
+  function niceMax(v) {
+    if (v <= 4) return 4;
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
+    return 10 * p;
+  }
+
+  // series: [{name, color, values}], kind: 'line' | 'bar'
+  function drawChart(el, labels, series, kind, unit) {
+    const W = Math.max(el.clientWidth, 320), H = 230;
+    const m = { l: 38, r: 10, t: 10, b: 26 };
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const n = labels.length;
+    const max = niceMax(Math.max(0, ...series.flatMap((s) => s.values)));
+    const x = (i) => m.l + (kind === 'bar' ? (i + 0.5) * (iw / n) : (n === 1 ? iw / 2 : i * (iw / (n - 1))));
+    const y = (v) => m.t + ih - (v / max) * ih;
+    let g = '';
+    for (let k = 0; k <= 4; k++) {
+      const v = (max / 4) * k, yy = y(v);
+      g += `<line class="gl" x1="${m.l}" x2="${W - m.r}" y1="${yy}" y2="${yy}"/><text x="${m.l - 8}" y="${yy + 4}" text-anchor="end">${fmt(Math.round(v * 10) / 10)}</text>`;
+    }
+    const every = Math.ceil(n / 7);
+    labels.forEach((d, i) => {
+      if (i % every === 0 || i === n - 1) g += `<text x="${x(i)}" y="${H - 6}" text-anchor="middle">${mmdd(d)}</text>`;
+    });
+    let marks = '';
+    if (kind === 'bar') {
+      const step = iw / n, bw = Math.min(22, step * 0.62), r = Math.min(3, bw / 2);
+      series[0].values.forEach((v, i) => {
+        if (!v) return;
+        const x0 = x(i) - bw / 2, y0 = y(v), h = m.t + ih - y0;
+        marks += `<path d="M${x0},${m.t + ih} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x0 + bw - r} Q${x0 + bw},${y0} ${x0 + bw},${y0 + r} V${m.t + ih} Z" fill="${series[0].color}"/>`;
+      });
+    } else {
+      series.forEach((s) => {
+        const pts = s.values.map((v, i) => `${x(i)},${y(v)}`).join(' ');
+        marks += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+        if (n <= 31) marks += s.values.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="2.6" fill="${s.color}"/>`).join('');
+      });
+    }
+    const total = series.reduce((a, s) => a + s.values.reduce((b, v) => b + v, 0), 0);
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}${marks}<line id="gd" class="gl" y1="${m.t}" y2="${m.t + ih}" stroke="${'#8c8064'}" style="display:none"/><rect id="ov" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>
+      <div class="st-tip"></div>${total === 0 ? '<div class="st-empty">아직 집계된 데이터가 없어요.<br>첫 방문이 쌓이면 여기에 표시돼요.</div>' : ''}`;
+    const svg = el.querySelector('svg'), tip = el.querySelector('.st-tip'), gd = el.querySelector('#gd'), ov = el.querySelector('#ov');
+    ov.addEventListener('pointermove', (e) => {
+      const r = svg.getBoundingClientRect();
+      const px = ((e.clientX - r.left) / r.width) * W;
+      let i = kind === 'bar' ? Math.floor((px - m.l) / (iw / n)) : Math.round(((px - m.l) / iw) * (n - 1));
+      i = Math.max(0, Math.min(n - 1, i));
+      gd.setAttribute('x1', x(i)); gd.setAttribute('x2', x(i)); gd.style.display = kind === 'line' ? '' : 'none';
+      tip.innerHTML = `<b>${labels[i]}</b>` + series.map((s) => `<br><span class="sw" style="background:${s.color}"></span>${s.name} ${fmt(s.values[i])}${unit}`).join('');
+      const top = Math.min(...series.map((s) => y(s.values[i])));
+      tip.style.left = `${(x(i) / W) * 100}%`;
+      tip.style.top = `${((top - 8) / H) * r.height}px`;
+      tip.style.opacity = 1;
+    });
+    ov.addEventListener('pointerleave', () => { tip.style.opacity = 0; gd.style.display = 'none'; });
+  }
+
+  function drawTable(el, labels, series) {
+    el.innerHTML = `<table class="st-table"><thead><tr><th>날짜</th>${series.map((s) => `<th>${s.name}</th>`).join('')}</tr></thead><tbody>` +
+      labels.map((d, i) => `<tr><td>${d}</td>${series.map((s) => `<td>${fmt(s.values[i])}</td>`).join('')}</tr>`).reverse().join('') + '</tbody></table>';
+  }
+
+  function drawBars(el, rows, labelFn, emptyMsg, valueSuffix) {
+    if (!rows.length) { el.innerHTML = `<div class="muted" style="font-size:13.5px;">${emptyMsg}</div>`; return; }
+    const max = Math.max(...rows.map((r) => r.n));
+    el.innerHTML = rows.map((r) => `<div class="st-bar"><span class="lb" title="${escapeHtml(labelFn(r))}">${escapeHtml(labelFn(r))}</span><span class="tr"><span style="width:${Math.max(2, (r.n / max) * 100)}%"></span></span><span class="vl">${fmt(r.n)}${valueSuffix || ''}</span></div>`).join('');
+  }
+
+  function kpi(label, num, sub) {
+    return `<div class="stat-card"><div class="num">${num}</div><div class="label">${label}${sub ? `<br><span class="muted">${sub}</span>` : ''}</div></div>`;
+  }
+
+  // ---------- 가입자(Firestore) ----------
+  let signupByDay = null;
+  async function loadSignups() {
+    if (signupByDay) return signupByDay;
+    const snap = await getDocs(collection(db, 'users'));
+    signupByDay = {};
+    snap.forEach((d) => {
+      const ts = d.data().created_at;
+      if (ts && ts.toDate) { const k = kstDay(ts.toDate()); signupByDay[k] = (signupByDay[k] || 0) + 1; }
+    });
+    return signupByDay;
+  }
+
+  // ---------- 렌더 ----------
+  let days = 30, last = null;
+  async function load() {
+    document.getElementById('err').innerHTML = '';
+    let data;
+    try {
+      const res = await fetch(`${PILOT_BASE_URL}/admin/stats?days=${days}`, { headers: { 'X-Admin-Report-Key': ADMIN_REPORT_KEY } });
+      if (!res.ok) throw new Error(res.status === 404 ? '통계 서버가 아직 배포되지 않았어요 (server/pilot-worker/deploy.bat 실행 필요)' : `서버 응답 ${res.status}`);
+      data = await res.json();
+    } catch (e) {
+      document.getElementById('err').innerHTML = `<div class="panel"><div class="panel-body" style="color:var(--danger);">통계를 불러오지 못했어요: ${escapeHtml(e.message || String(e))}</div></div>`;
+      return;
+    }
+    let signups = {};
+    try { signups = await loadSignups(); } catch (e) { signups = {}; }
+    last = { data, signups };
+    render();
+  }
+
+  function render() {
+    const { data, signups } = last;
+    const labels = data.series.map((s) => s.day);
+    const uv = data.series.map((s) => s.uv), pv = data.series.map((s) => s.pv);
+    const su = labels.map((d) => signups[d] || 0);
+    const sum = (a) => a.reduce((x, y) => x + y, 0);
+    const uvSum = sum(uv), pvSum = sum(pv), suSum = sum(su);
+    const signupPv = (data.pages.find((p) => p.path === '/signup') || {}).n || 0;
+    const conv = uvSum ? (suSum / uvSum) * 100 : 0;
+
+    document.getElementById('asof').textContent = `${data.since} ~ ${data.today}`;
+    document.getElementById('kpis').innerHTML =
+      kpi('방문자 (일별 합계)', fmt(uvSum), `하루 평균 ${fmt(Math.round(uvSum / days))}명`) +
+      kpi('페이지뷰', fmt(pvSum), uvSum ? `방문자당 ${(pvSum / uvSum).toFixed(1)}페이지` : '') +
+      kpi('신규 가입자', fmt(suSum)) +
+      kpi('가입 전환율', `${conv.toFixed(1)}%`, '신규 가입자 ÷ 방문자');
+
+    const s1 = [{ name: '방문자', color: C_MAIN, values: uv }, { name: '페이지뷰', color: C_SUB, values: pv }];
+    const s2 = [{ name: '신규 가입자', color: C_MAIN, values: su }];
+    const s3 = [{ name: '활성 사용자', color: C_MAIN, values: data.series.map((s) => s.app_dau) }];
+    const s3t = [...s3, { name: '신규 설치', values: data.series.map((s) => s.app_new) }];
+    const paint = () => {
+      drawChart(document.getElementById('c1'), labels, s1, 'line', '');
+      drawChart(document.getElementById('c2'), labels, s2, 'bar', '명');
+      drawChart(document.getElementById('c3'), labels, s3, 'line', '명');
+    };
+    paint(); window.__paint = paint;
+    drawTable(document.getElementById('t1'), labels, s1);
+    drawTable(document.getElementById('t2'), labels, s2);
+    drawTable(document.getElementById('t3'), labels, s3t);
+
+    drawBars(document.getElementById('pages'), data.pages, (r) => PATH_LABEL[r.path] || r.path, '아직 집계된 페이지뷰가 없어요.', '회');
+    drawBars(document.getElementById('refs'), data.referrers, (r) => r.source.startsWith('utm:') ? `캠페인 · ${r.source.slice(4)}` : r.source, '아직 집계된 유입이 없어요.', '회');
+
+    const fRows = [
+      { label: '홈페이지 방문자', n: uvSum },
+      { label: '가입 페이지 조회', n: signupPv },
+      { label: '가입 완료', n: suSum },
+    ];
+    const fMax = Math.max(1, ...fRows.map((r) => r.n));
+    document.getElementById('funnel').innerHTML = fRows.map((r, i) => `<div class="st-bar"><span class="lb">${r.label}</span><span class="tr"><span style="width:${Math.max(2, (r.n / fMax) * 100)}%"></span></span><span class="vl">${fmt(r.n)}${i ? ` · ${(fRows[0].n ? (r.n / fRows[0].n) * 100 : 0).toFixed(1)}%` : ''}</span></div>`).join('');
+    document.getElementById('funnelNote').textContent = '가입 페이지 조회는 페이지뷰(횟수)라 방문자와 단위가 조금 달라요. 대략적인 흐름을 보는 용도로 봐주세요.';
+
+    const app = data.app;
+    document.getElementById('appKpis').innerHTML =
+      kpi('누적 설치', fmt(app.total_installs)) +
+      kpi('최근 30일 활성', fmt(app.active_30d), '앱을 켠 설치본') +
+      kpi('오늘 활성', fmt(data.series[data.series.length - 1].app_dau)) +
+      kpi(`최근 ${days}일 신규 설치`, fmt(sum(data.series.map((s) => s.app_new))));
+    drawBars(document.getElementById('versions'), app.versions.map((v) => ({ v: v.v, n: v.n })), (r) => `v${r.v}`, '아직 집계된 설치본이 없어요. 새 버전 앱이 실행되면 나타나요.', '대');
+  }
+
+  document.getElementById('range').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    days = parseInt(b.dataset.d, 10);
+    document.querySelectorAll('#range button').forEach((x) => x.classList.toggle('on', x === b));
+    load();
+  });
+  content.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-table]'); if (!t) return;
+    const box = document.getElementById(t.dataset.table);
+    box.hidden = !box.hidden;
+    t.textContent = box.hidden ? '표로 보기' : '표 닫기';
+  });
+  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => window.__paint && window.__paint(), 120); });
+
+  load();
+</script>
+
+</body>
+</html>

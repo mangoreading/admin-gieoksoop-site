@@ -72,11 +72,15 @@ const ICON_ERRORS =
 const ICON_SETTINGS =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.03a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.03a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.03a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>';
 
+const ICON_STATS =
+  '<svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>';
+
 // 사이드바 메뉴 정의 — 새 화면을 추가할 땐 이 배열에 한 줄만 추가하면 된다.
 const NAV_ITEMS = [
   { key: "dashboard", href: "index.html", label: "대시보드", icon: ICON_DASHBOARD },
   { key: "members", href: "members.html", label: "회원관리", icon: ICON_MEMBERS },
   { key: "payments", href: "payments.html", label: "구독결제 관리", icon: ICON_PAYMENTS },
+  { key: "stats", href: "stats.html", label: "방문 통계", icon: ICON_STATS },
   { key: "guides", href: "guides.html", label: "사용가이드 관리", icon: ICON_GUIDES },
   { key: "notices", href: "notices.html", label: "공지사항 관리", icon: ICON_NOTICES },
   { key: "error_reports", href: "error-reports.html", label: "오류 로그", icon: ICON_ERRORS },
