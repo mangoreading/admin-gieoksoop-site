@@ -22,7 +22,7 @@
   const { uid } = await guardAdminPage({
     activeKey: 'notices',
     title: '공지사항 관리',
-    desc: '공개 사이트(gieoksoop.com/notice.html)에 노출되는 공지사항을 관리해요.',
+    desc: '공개 사이트(gieoksoop.com/notice.html)에 노출되는 공지사항을 관리해요. 이미지를 등록하면 홈페이지 접속 시 팝업으로도 보여줄 수 있어요.',
   });
 
   const content = document.getElementById('adminContent');
@@ -69,7 +69,7 @@
       .map(
         (n) => `
       <tr>
-        <td>${escapeHtml(n.title)}</td>
+        <td>${escapeHtml(n.title)}${n.popup ? ' <span class="pill pill-ok" title="홈페이지 접속 시 팝업으로 노출">팝업</span>' : ''}</td>
         <td class="muted">${fmtDate(n.created_at)}</td>
         <td>${n.pinned ? '📌 고정' : '-'}</td>
         <td>${n.published === false ? '<span class="pill pill-muted">비공개</span>' : '<span class="pill pill-ok">공개중</span>'}</td>
@@ -125,6 +125,33 @@
       .join('');
   }
 
+  // 팝업 이미지를 브라우저에서 줄여서(가로 900px 이내, JPEG) 공지 문서에 함께 저장한다.
+  // Firestore 문서 한도(1MB)를 넘지 않도록 용량이 크면 화질을 낮춰 다시 만든다.
+  function fileToPopupImage(file) {
+    return new Promise((resolve, reject) => {
+      if (!/^image\//.test(file.type)) return reject(new Error('이미지 파일(PNG, JPG 등)을 선택해 주세요.'));
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const r = Math.min(1, 900 / img.width);
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * r));
+        c.height = Math.max(1, Math.round(img.height * r));
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        let q = 0.9, out;
+        do { out = c.toDataURL('image/jpeg', q); q -= 0.08; } while (out.length > 600000 && q > 0.4);
+        URL.revokeObjectURL(url);
+        if (out.length > 850000) return reject(new Error('이미지가 너무 커요. 더 작은 이미지로 올려 주세요.'));
+        resolve(out);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('이미지를 읽지 못했어요.')); };
+      img.src = url;
+    });
+  }
+
   // 관리자만 쓰는 화면이지만, 최소한의 안전장치로 script/스타일 태그와 on*, javascript: 를 제거한다.
   function sanitizeRichHtml(html) {
     const div = document.createElement('div');
@@ -143,6 +170,7 @@
   function openEditor(id) {
     const n = id ? notices.find((x) => x.id === id) : null;
     const isNew = !n;
+    let popupImage = n && n.popup_image ? n.popup_image : '';
     openModal(`
       <h3>${isNew ? '새 공지사항' : '공지사항 수정'}</h3>
       <div class="form-field"><label>제목</label><input type="text" id="fTitle" value="${escapeHtml(n ? n.title : '')}"></div>
@@ -168,11 +196,45 @@
       <div class="form-field">
         <label><input type="checkbox" id="fPublished" ${!n || n.published !== false ? 'checked' : ''} style="width:auto;margin-right:6px;">공개 사이트에 노출</label>
       </div>
+      <div class="form-field" style="border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--paper);">
+        <label><input type="checkbox" id="fPopup" ${n && n.popup ? 'checked' : ''} style="width:auto;margin-right:6px;">홈페이지 접속 시 팝업으로 노출</label>
+        <div id="popupFields" style="display:${n && n.popup ? 'block' : 'none'};margin-top:12px;">
+          <label>팝업 이미지</label>
+          <input type="file" id="fPopupFile" accept="image/*">
+          <div id="popupPreviewWrap" style="margin-top:10px;display:${popupImage ? 'block' : 'none'};">
+            <img id="popupPreview" src="${popupImage}" alt="" style="max-width:240px;max-height:240px;border:1px solid var(--border);border-radius:10px;display:block;">
+            <button type="button" class="btn btn-outline btn-sm" id="popupRemove" style="margin-top:8px;">이미지 삭제</button>
+          </div>
+          <p class="form-hint">가로 900px 안팎의 세로·정사각형 이미지를 권장해요(큰 이미지는 자동으로 줄여 저장돼요). 방문자가 팝업의 "자세히 보기"를 누르면 이 공지의 내용으로 바로 이동해요.</p>
+          <label style="margin-top:10px;">노출 종료일 (선택)</label>
+          <input type="date" id="fPopupUntil" value="${n && n.popup_until ? n.popup_until : ''}">
+          <p class="form-hint">비워 두면 "팝업 노출"을 끌 때까지 계속 보여요. 종료일 당일까지 노출돼요(한국시간).</p>
+        </div>
+      </div>
       <div class="modal-actions">
         <button class="btn btn-outline" id="cancelBtn">취소</button>
         <button class="btn btn-primary" id="saveBtn">저장</button>
       </div>
     `, { size: 'lg' });
+
+    const fPopup = document.getElementById('fPopup');
+    const popupFields = document.getElementById('popupFields');
+    fPopup.addEventListener('change', () => { popupFields.style.display = fPopup.checked ? 'block' : 'none'; });
+    const showPreview = () => {
+      document.getElementById('popupPreviewWrap').style.display = popupImage ? 'block' : 'none';
+      document.getElementById('popupPreview').src = popupImage;
+    };
+    document.getElementById('fPopupFile').addEventListener('change', async (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      try { popupImage = await fileToPopupImage(f); showPreview(); }
+      catch (err) { toast(err.message || String(err), true); e.target.value = ''; }
+    });
+    document.getElementById('popupRemove').addEventListener('click', () => {
+      popupImage = '';
+      document.getElementById('fPopupFile').value = '';
+      showPreview();
+    });
 
     document.querySelectorAll('#rtToolbar [data-cmd]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -197,17 +259,24 @@
       const body = sanitizeRichHtml(bodyEl.innerHTML);
       const pinned = document.getElementById('fPinned').checked;
       const published = document.getElementById('fPublished').checked;
+      const popup = document.getElementById('fPopup').checked;
+      const popup_until = popup ? document.getElementById('fPopupUntil').value : '';
+      const popup_image = popup ? popupImage : '';
       if (!title || !hasText) {
         toast('제목과 내용을 입력해 주세요.', true);
+        return;
+      }
+      if (popup && !popup_image) {
+        toast('팝업으로 노출하려면 팝업 이미지를 등록해 주세요.', true);
         return;
       }
       try {
         if (isNew) {
           await addDoc(collection(db, 'notices'), {
-            title, body, pinned, published, created_at: new Date(), updated_at: new Date(), updated_by: uid,
+            title, body, pinned, published, popup, popup_image, popup_until, created_at: new Date(), updated_at: new Date(), updated_by: uid,
           });
         } else {
-          await updateDoc(doc(db, 'notices', n.id), { title, body, pinned, published, updated_at: new Date(), updated_by: uid });
+          await updateDoc(doc(db, 'notices', n.id), { title, body, pinned, published, popup, popup_image, popup_until, updated_at: new Date(), updated_by: uid });
         }
         closeModal();
         toast('저장했어요.');
