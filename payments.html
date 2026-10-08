@@ -131,7 +131,7 @@
       </div>
     </div>
 
-    <p class="muted" style="font-size:13px;">[결제취소]를 누르면 포트원을 통해 실제 카드 승인이 취소(전액/부분)돼요. 결제 실패 재시도, 카드 만료 임박 알림은 아직 없어요. 계좌이체 등 수동 등록 건은 <a href="members.html">회원관리</a>에서 관리해요.</p>
+    <p class="muted" style="font-size:13px;">[결제취소]를 누르면 포트원을 통해 실제 카드 승인이 취소(전액/부분)돼요. 이미 부분환불된 건은 [잔액 취소]로 남은 금액을 추가로 취소할 수 있어요. 결제 실패 재시도, 카드 만료 임박 알림은 아직 없어요. 계좌이체 등 수동 등록 건은 <a href="members.html">회원관리</a>에서 관리해요.</p>
   `;
 
   const tbody = document.getElementById('tbody');
@@ -173,7 +173,7 @@
         <td>${statusPill(p.status)}</td>
         <td class="muted" style="font-size:12px;">${escapeHtml(p.payment_id || '-')}</td>
         <td class="muted" style="font-size:12px;">${sourceLabel(p.created_by)}</td>
-        <td>${canAdminRefund(p) ? `<button type="button" class="btn btn-danger btn-sm" data-refundpay="${p.id}">결제취소</button>` : ''}</td>
+        <td>${canAdminRefund(p) ? `<button type="button" class="btn btn-danger btn-sm" data-refundpay="${p.id}">${p.status === 'partial_refunded' ? '잔액 취소' : '결제취소'}</button>` : ''}</td>
       </tr>`;
       })
       .join('');

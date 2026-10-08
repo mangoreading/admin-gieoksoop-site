@@ -234,7 +234,7 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
             <td class="muted">${escapeHtml(p.plan || '-')}</td>
             <td class="muted">${escapeHtml(p.method || '-')}</td>
             <td>${p.status === 'refunded' ? '<span class="pill pill-danger">환불</span>' : p.status === 'partial_refunded' ? '<span class="pill pill-danger">부분환불 ' + Number(p.refunded_amount || 0).toLocaleString() + '원</span>' : p.status === 'failed' ? '<span class="pill pill-danger">실패</span>' : '<span class="pill pill-ok">완료</span>'}</td>
-            <td>${canAdminRefund(p) ? `<button type="button" class="btn btn-danger btn-sm" data-refundpay="${p.id}">결제취소</button>` : ''}${!p.payment_id ? `<button type="button" class="btn btn-outline btn-sm" data-delpay="${p.id}">삭제</button>` : ''}</td>
+            <td>${canAdminRefund(p) ? `<button type="button" class="btn btn-danger btn-sm" data-refundpay="${p.id}">${p.status === 'partial_refunded' ? '잔액 취소' : '결제취소'}</button>` : ''}${!p.payment_id ? `<button type="button" class="btn btn-outline btn-sm" data-delpay="${p.id}">삭제</button>` : ''}</td>
           </tr>`
           )
           .join('');
