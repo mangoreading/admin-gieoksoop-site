@@ -60,8 +60,8 @@
   const PILOT_BASE_URL = 'https://gieoksoop-pilot.mangoreading-it.workers.dev';
   const ADMIN_REPORT_KEY = '186836123d5218539d3655eec43950169350bb66c505e827';
 
-  const C_MAIN = '#cb6b45';   // 주 계열 (accent)
-  const C_SUB = '#2d4a86';    // 보조 계열 (blue)
+  const C_MAIN = '#1f3a5f';   // 주 계열 (accent)
+  const C_SUB = '#7b9bd0';    // 보조 계열 (light blue)
   const KST_MS = 9 * 3600 * 1000;
   const kstDay = (d) => new Date(d.getTime() + KST_MS).toISOString().slice(0, 10);
   const mmdd = (day) => day.slice(5).replace('-', '.');
@@ -180,7 +180,7 @@
       });
     }
     const total = series.reduce((a, s) => a + s.values.reduce((b, v) => b + v, 0), 0);
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}${marks}<line id="gd" class="gl" y1="${m.t}" y2="${m.t + ih}" stroke="${'#8c8064'}" style="display:none"/><rect id="ov" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}">${g}${marks}<line id="gd" class="gl" y1="${m.t}" y2="${m.t + ih}" stroke="${'#656d7a'}" style="display:none"/><rect id="ov" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/></svg>
       <div class="st-tip"></div>${total === 0 ? '<div class="st-empty">아직 집계된 데이터가 없어요.<br>첫 방문이 쌓이면 여기에 표시돼요.</div>' : ''}`;
     const svg = el.querySelector('svg'), tip = el.querySelector('.st-tip'), gd = el.querySelector('#gd'), ov = el.querySelector('#ov');
     ov.addEventListener('pointermove', (e) => {
