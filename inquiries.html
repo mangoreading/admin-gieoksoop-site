@@ -103,7 +103,7 @@
         <td class="muted">${fmtDateTime(q.created_at)}</td>
         <td>${escapeHtml(CATEGORIES[q.category] || '기타')}</td>
         <td><div class="inq-title">${escapeHtml(q.title)}</div></td>
-        <td class="muted">${escapeHtml(q.email || '-')}</td>
+        <td>${q.name ? `<div>${escapeHtml(q.name)}</div><div class="muted" style="font-size:12px;">${escapeHtml(q.email || '-')}</div>` : `<span class="muted">${escapeHtml(q.email || '-')}</span>`}</td>
         <td>${statusPill(q.status || 'open')}</td>
         <td><button class="btn btn-outline btn-sm" data-open="${q.id}">열기</button></td>
       </tr>`).join('');
