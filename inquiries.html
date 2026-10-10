@@ -17,6 +17,12 @@
   .inq-meta dd{margin:0;word-break:break-all;}
   .inq-msg{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.7;margin-bottom:16px;}
   .inq-sub{font-size:12.5px;color:var(--ink-faint);margin:4px 0 0;}
+  .inq-thumbs{display:flex;gap:10px;flex-wrap:wrap;margin:-6px 0 16px;}
+  .inq-thumbs a{display:block;width:120px;height:120px;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--bg);}
+  .inq-thumbs img{width:100%;height:100%;object-fit:cover;display:block;}
+  .inq-label-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;flex-wrap:wrap;}
+  .inq-label-row label{margin:0;}
+  .inq-ai-note{display:none;margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--accent-bg);font-size:13px;line-height:1.6;color:var(--ink-dim);white-space:pre-wrap;}
 </style>
 </head>
 <body>
@@ -26,7 +32,7 @@
 <script type="module">
   import { guardAdminPage, auth, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
   import {
-    collection, getDocs, getDoc, updateDoc, deleteDoc, doc, query, orderBy, limit, serverTimestamp,
+    collection, getDocs, getDoc, updateDoc, doc, query, orderBy, limit, serverTimestamp,
   } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
   await guardAdminPage({
@@ -35,7 +41,8 @@
     desc: '공개 사이트(gieoksoop.com/contact.html)에서 접수된 문의를 확인하고 답변해요. 답변은 사용자의 "내 문의 내역"에 표시돼요.',
   });
 
-  const NOTIFY_URL = 'https://gieoksoop.com/api/inquiry/answered';
+  const API = 'https://gieoksoop.com/api/inquiry';
+  const NOTIFY_URL = API + '/answered';
   const CATEGORIES = { payment: '결제·환불', subscription: '구독·해지', account: '계정·로그인', app: '앱 사용·오류', etc: '기타' };
   const STATUS = {
     open: ['접수됨', 'pill-accent'],
@@ -117,6 +124,45 @@
 
   filterEl.addEventListener('change', render);
 
+  async function authFetch(path, options = {}) {
+    const token = await auth.currentUser.getIdToken();
+    return fetch(API + path, {
+      ...options,
+      headers: { ...(options.headers || {}), Authorization: 'Bearer ' + token },
+    });
+  }
+
+  // 첨부 이미지는 로그인 토큰이 있어야 볼 수 있어서 fetch로 받아 와 표시한다.
+  async function loadAttachments(q) {
+    const box = document.getElementById('inqThumbs');
+    if (!box || !Array.isArray(q.attachments)) return;
+    for (const a of q.attachments) {
+      try {
+        const res = await authFetch('/file?id=' + encodeURIComponent(q.id) + '&n=' + encodeURIComponent(a.n));
+        if (!res.ok) throw new Error('missing');
+        const url = URL.createObjectURL(await res.blob());
+        const link = document.createElement('a');
+        link.href = url; link.target = '_blank'; link.rel = 'noopener'; link.title = a.name || '';
+        const img = document.createElement('img');
+        img.src = url; img.alt = a.name || '첨부 이미지';
+        link.appendChild(img);
+        box.appendChild(link);
+      } catch (e) {
+        const sp = document.createElement('span');
+        sp.className = 'inq-sub';
+        sp.textContent = '이미지를 불러오지 못했어요(보관 기간 만료 또는 삭제).';
+        box.appendChild(sp);
+        break;
+      }
+    }
+  }
+
+  const DRAFT_ERRORS = {
+    ai_not_configured: 'AI 초안 기능이 아직 설정되지 않았어요. (Worker에 ANTHROPIC_API_KEY 등록 필요)',
+    not_admin: '관리자 권한이 확인되지 않아요.',
+    not_found: '문의를 찾지 못했어요.',
+  };
+
   async function notifyAnswered(id) {
     try {
       const token = await auth.currentUser.getIdToken();
@@ -141,6 +187,7 @@
     let userLine = '확인 중...';
     openModal(renderDetail(q, userLine), { size: 'lg' });
     bind(q);
+    loadAttachments(q);
     try {
       const u = await getDoc(doc(db, 'users', q.uid));
       if (u.exists()) {
@@ -168,9 +215,14 @@
         <dt>회원 ID</dt><dd class="muted">${escapeHtml(q.uid)}</dd>
       </dl>
       <div class="inq-msg">${escapeHtml(q.message)}</div>
+      ${Array.isArray(q.attachments) && q.attachments.length ? '<div class="inq-thumbs" id="inqThumbs"></div>' : ''}
       <div class="form-field">
-        <label for="inqAnswer">답변 (사용자의 "내 문의 내역"에 그대로 표시돼요)</label>
-        <textarea id="inqAnswer" rows="7" maxlength="4000" placeholder="답변을 입력하세요.">${escapeHtml(q.answer || '')}</textarea>
+        <div class="inq-label-row">
+          <label for="inqAnswer">답변 (사용자의 "내 문의 내역"에 그대로 표시돼요)</label>
+          <button type="button" class="btn btn-outline btn-sm" id="inqAi">AI 초안 작성</button>
+        </div>
+        <textarea id="inqAnswer" rows="7" maxlength="4000" placeholder="답변을 입력하세요. 'AI 초안 작성'을 누르면 가이드·약관·회원 정보를 참고한 초안이 채워져요. 반드시 확인·수정한 뒤 보내주세요.">${escapeHtml(q.answer || '')}</textarea>
+        <div class="inq-ai-note" id="inqAiNote"></div>
         <p class="inq-sub">${q.answered_at ? '마지막 답변: ' + fmtDateTime(q.answered_at) + (q.answered_by ? ' · ' + escapeHtml(q.answered_by) : '') : '아직 답변하지 않았어요.'}</p>
       </div>
       <div class="form-field">
@@ -187,6 +239,38 @@
 
   function bind(q) {
     document.getElementById('inqCancel').addEventListener('click', closeModal);
+
+    document.getElementById('inqAi').addEventListener('click', async () => {
+      const btn = document.getElementById('inqAi');
+      const ta = document.getElementById('inqAnswer');
+      if (ta.value.trim() && !window.confirm('입력한 답변을 AI 초안으로 바꿀까요?')) return;
+      const label = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '초안 작성 중...';
+      try {
+        const res = await authFetch('/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: q.id }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const msg = DRAFT_ERRORS[data.error] || ('초안을 만들지 못했어요' + (data.status ? ' (AI 서버 ' + data.status + ')' : '') + (data.detail ? ': ' + String(data.detail).slice(0, 120) : ''));
+          toast(msg, true);
+          return;
+        }
+        ta.value = data.draft || '';
+        const note = document.getElementById('inqAiNote');
+        const notes = [data.admin_notes ? 'AI 메모: ' + data.admin_notes : '', '※ AI가 만든 초안이에요. [확인 필요] 표시와 금액·날짜를 확인한 뒤 보내주세요.'].filter(Boolean).join('\n');
+        note.textContent = notes;
+        note.style.display = 'block';
+      } catch (e) {
+        toast('초안을 만들지 못했어요: ' + (e.message || e), true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = label;
+      }
+    });
 
     document.getElementById('inqSend').addEventListener('click', async () => {
       const answer = document.getElementById('inqAnswer').value.trim();
@@ -237,7 +321,13 @@
       document.getElementById('delCancel').addEventListener('click', closeModal);
       document.getElementById('delConfirm').addEventListener('click', async () => {
         try {
-          await deleteDoc(doc(db, 'inquiries', q.id));
+          // 서버가 첨부 파일까지 함께 지운다(문서만 지우면 이미지가 남는다).
+          const res = await authFetch('/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: q.id }),
+          });
+          if (!res.ok) throw new Error('서버 삭제 실패(' + res.status + ')');
           closeModal();
           toast('삭제했어요.');
           await load();
