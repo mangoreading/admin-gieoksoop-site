@@ -75,11 +75,15 @@ const ICON_SETTINGS =
 const ICON_STATS =
   '<svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>';
 
+const ICON_INQUIRIES =
+  '<svg viewBox="0 0 24 24"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.2 3.6c-.5.4-1.3.1-1.3-.6V16h-.0A1.5 1.5 0 0 1 4 14.5Z"/><path d="M8.5 9h7"/><path d="M8.5 12h4.5"/></svg>';
+
 // 사이드바 메뉴 정의 — 새 화면을 추가할 땐 이 배열에 한 줄만 추가하면 된다.
 const NAV_ITEMS = [
   { key: "dashboard", href: "index.html", label: "대시보드", icon: ICON_DASHBOARD },
   { key: "members", href: "members.html", label: "회원관리", icon: ICON_MEMBERS },
   { key: "payments", href: "payments.html", label: "구독결제 관리", icon: ICON_PAYMENTS },
+  { key: "inquiries", href: "inquiries.html", label: "고객문의", icon: ICON_INQUIRIES },
   { key: "guides", href: "guides.html", label: "사용가이드 관리", icon: ICON_GUIDES },
   { key: "notices", href: "notices.html", label: "공지사항 관리", icon: ICON_NOTICES },
   { key: "stats", href: "stats.html", label: "방문 통계", icon: ICON_STATS },

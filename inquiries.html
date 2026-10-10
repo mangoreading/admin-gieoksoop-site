@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>고객문의 — 기억숲 Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="css/admin.css">
+<style>
+  .inq-filter{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .inq-filter select{padding:8px 12px;border-radius:9px;border:1px solid var(--border);background:var(--bg);font-family:inherit;font-size:13.5px;}
+  .inq-title{max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .inq-meta{display:grid;grid-template-columns:90px 1fr;gap:6px 12px;font-size:13.5px;margin:0 0 14px;}
+  .inq-meta dt{color:var(--ink-faint);}
+  .inq-meta dd{margin:0;word-break:break-all;}
+  .inq-msg{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.7;margin-bottom:16px;}
+  .inq-sub{font-size:12.5px;color:var(--ink-faint);margin:4px 0 0;}
+</style>
+</head>
+<body>
+
+<div class="admin-shell" id="adminRoot"></div>
+
+<script type="module">
+  import { guardAdminPage, auth, db, toast, openModal, closeModal, escapeHtml } from './js/admin-guard.js';
+  import {
+    collection, getDocs, getDoc, updateDoc, deleteDoc, doc, query, orderBy, limit, serverTimestamp,
+  } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+  await guardAdminPage({
+    activeKey: 'inquiries',
+    title: '고객문의',
+    desc: '공개 사이트(gieoksoop.com/contact.html)에서 접수된 문의를 확인하고 답변해요. 답변은 사용자의 "내 문의 내역"에 표시돼요.',
+  });
+
+  const NOTIFY_URL = 'https://gieoksoop.com/api/inquiry/answered';
+  const CATEGORIES = { payment: '결제·환불', subscription: '구독·해지', account: '계정·로그인', app: '앱 사용·오류', etc: '기타' };
+  const STATUS = {
+    open: ['접수됨', 'pill-accent'],
+    answered: ['답변 완료', 'pill-ok'],
+    closed: ['종료', 'pill-muted'],
+  };
+
+  const content = document.getElementById('adminContent');
+  content.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <div><h2>문의 목록</h2><p id="inqCount">불러오는 중...</p></div>
+        <div class="inq-filter">
+          <select id="statusFilter">
+            <option value="open">접수됨(답변 필요)</option>
+            <option value="answered">답변 완료</option>
+            <option value="closed">종료</option>
+            <option value="all">전체</option>
+          </select>
+        </div>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="data-table nowrap">
+          <thead><tr><th>접수일</th><th>분류</th><th>제목</th><th>문의자</th><th>상태</th><th></th></tr></thead>
+          <tbody id="tbody"><tr><td colspan="6" class="empty-row">불러오는 중...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const tbody = document.getElementById('tbody');
+  const filterEl = document.getElementById('statusFilter');
+  let items = [];
+
+  function fmtDateTime(ts) {
+    if (!ts || !ts.toDate) return '-';
+    const d = ts.toDate();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}.${p(d.getMonth() + 1)}.${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  function statusPill(s) {
+    const [label, cls] = STATUS[s] || STATUS.open;
+    return `<span class="pill ${cls}">${label}</span>`;
+  }
+
+  function render() {
+    const f = filterEl.value;
+    const list = f === 'all' ? items : items.filter((q) => (q.status || 'open') === f);
+    const openCount = items.filter((q) => (q.status || 'open') === 'open').length;
+    document.getElementById('inqCount').textContent = `전체 ${items.length}건 · 답변 필요 ${openCount}건 (최근 200건)`;
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-row">해당하는 문의가 없어요.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list.map((q) => `
+      <tr>
+        <td class="muted">${fmtDateTime(q.created_at)}</td>
+        <td>${escapeHtml(CATEGORIES[q.category] || '기타')}</td>
+        <td><div class="inq-title">${escapeHtml(q.title)}</div></td>
+        <td class="muted">${escapeHtml(q.email || '-')}</td>
+        <td>${statusPill(q.status || 'open')}</td>
+        <td><button class="btn btn-outline btn-sm" data-open="${q.id}">열기</button></td>
+      </tr>`).join('');
+    tbody.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => openDetail(b.getAttribute('data-open'))));
+  }
+
+  async function load() {
+    try {
+      const snap = await getDocs(query(collection(db, 'inquiries'), orderBy('created_at', 'desc'), limit(200)));
+      items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    } catch (e) {
+      console.error(e);
+      tbody.innerHTML = `<tr><td colspan="6" class="empty-row">문의를 불러오지 못했어요: ${escapeHtml(e.message || e)}</td></tr>`;
+      return;
+    }
+    render();
+  }
+
+  filterEl.addEventListener('change', render);
+
+  async function notifyAnswered(id) {
+    try {
+      const token = await auth.currentUser.getIdToken();
+      const res = await fetch(NOTIFY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return 'failed';
+      return data.mail || 'failed';
+    } catch (e) {
+      return 'failed';
+    }
+  }
+
+  async function openDetail(id) {
+    const q = items.find((x) => x.id === id);
+    if (!q) return;
+
+    // 문의자의 현재 구독 상태(고객지원 판단용) -- 문의자가 직접 적은 값이 아니라 회원 문서의 실제 값을 보여준다.
+    let userLine = '확인 중...';
+    openModal(renderDetail(q, userLine), { size: 'lg' });
+    bind(q);
+    try {
+      const u = await getDoc(doc(db, 'users', q.uid));
+      if (u.exists()) {
+        const d = u.data();
+        const nb = d.next_billing_at && d.next_billing_at.toDate ? d.next_billing_at.toDate().toISOString().slice(0, 10) : '-';
+        userLine = `상태: ${escapeHtml(d.subscription_status || 'none')} · 플랜: ${escapeHtml(d.subscription_plan || '-')} · 다음 결제/만료: ${nb}`;
+      } else {
+        userLine = '회원 정보를 찾지 못했어요.';
+      }
+    } catch (e) {
+      userLine = '회원 정보를 불러오지 못했어요.';
+    }
+    const el = document.getElementById('inqUserLine');
+    if (el) el.innerHTML = userLine;
+  }
+
+  function renderDetail(q, userLine) {
+    return `
+      <h3>${escapeHtml(q.title)}</h3>
+      <dl class="inq-meta">
+        <dt>분류</dt><dd>${escapeHtml(CATEGORIES[q.category] || '기타')} ${statusPill(q.status || 'open')}</dd>
+        <dt>접수일</dt><dd>${fmtDateTime(q.created_at)}</dd>
+        <dt>문의자</dt><dd>${escapeHtml(q.name || '-')} · ${escapeHtml(q.email || '-')}</dd>
+        <dt>회원 상태</dt><dd id="inqUserLine">${userLine}</dd>
+        <dt>회원 ID</dt><dd class="muted">${escapeHtml(q.uid)}</dd>
+      </dl>
+      <div class="inq-msg">${escapeHtml(q.message)}</div>
+      <div class="form-field">
+        <label for="inqAnswer">답변 (사용자의 "내 문의 내역"에 그대로 표시돼요)</label>
+        <textarea id="inqAnswer" rows="7" maxlength="4000" placeholder="답변을 입력하세요.">${escapeHtml(q.answer || '')}</textarea>
+        <p class="inq-sub">${q.answered_at ? '마지막 답변: ' + fmtDateTime(q.answered_at) + (q.answered_by ? ' · ' + escapeHtml(q.answered_by) : '') : '아직 답변하지 않았어요.'}</p>
+      </div>
+      <div class="form-field">
+        <label for="inqNote">내부 메모 (사용자에게 보이지 않아요)</label>
+        <textarea id="inqNote" rows="2" maxlength="1000" placeholder="처리 내용을 기록해 두세요.">${escapeHtml(q.admin_note || '')}</textarea>
+      </div>
+      <div class="modal-actions" style="flex-wrap:wrap;">
+        <button class="btn btn-danger btn-sm" id="inqDelete" style="margin-right:auto;">삭제</button>
+        <button class="btn btn-outline" id="inqCancel">닫기</button>
+        <button class="btn btn-outline" id="inqClose">답변 없이 종료</button>
+        <button class="btn btn-primary" id="inqSend">답변 저장 · 알림 보내기</button>
+      </div>`;
+  }
+
+  function bind(q) {
+    document.getElementById('inqCancel').addEventListener('click', closeModal);
+
+    document.getElementById('inqSend').addEventListener('click', async () => {
+      const answer = document.getElementById('inqAnswer').value.trim();
+      const note = document.getElementById('inqNote').value.trim();
+      if (!answer) return toast('답변 내용을 입력해 주세요.', true);
+      const btn = document.getElementById('inqSend');
+      btn.disabled = true;
+      try {
+        await updateDoc(doc(db, 'inquiries', q.id), {
+          status: 'answered',
+          answer,
+          admin_note: note,
+          answered_at: serverTimestamp(),
+          answered_by: (auth.currentUser && auth.currentUser.email) || '',
+        });
+      } catch (e) {
+        btn.disabled = false;
+        return toast('저장하지 못했어요: ' + (e.message || e), true);
+      }
+      const mail = await notifyAnswered(q.id);
+      closeModal();
+      if (mail === 'sent') toast('답변을 저장하고 문의자에게 알림 메일을 보냈어요.');
+      else if (mail === 'not_configured') toast('답변을 저장했어요. (메일 알림은 아직 설정되지 않아 보내지 않았어요)');
+      else toast('답변은 저장했지만 알림 메일은 보내지 못했어요. 사용자가 문의 내역에서 직접 확인할 수 있어요.', true);
+      await load();
+    });
+
+    document.getElementById('inqClose').addEventListener('click', async () => {
+      const note = document.getElementById('inqNote').value.trim();
+      try {
+        await updateDoc(doc(db, 'inquiries', q.id), { status: 'closed', admin_note: note });
+        closeModal();
+        toast('종료 처리했어요.');
+        await load();
+      } catch (e) {
+        toast('처리하지 못했어요: ' + (e.message || e), true);
+      }
+    });
+
+    document.getElementById('inqDelete').addEventListener('click', () => {
+      openModal(`
+        <h3>문의 삭제</h3>
+        <p>"${escapeHtml(q.title)}" 문의를 완전히 삭제할까요? 스팸이나 테스트 문의에만 사용하세요. 되돌릴 수 없어요.</p>
+        <div class="modal-actions">
+          <button class="btn btn-outline" id="delCancel">취소</button>
+          <button class="btn btn-danger" id="delConfirm">삭제</button>
+        </div>`);
+      document.getElementById('delCancel').addEventListener('click', closeModal);
+      document.getElementById('delConfirm').addEventListener('click', async () => {
+        try {
+          await deleteDoc(doc(db, 'inquiries', q.id));
+          closeModal();
+          toast('삭제했어요.');
+          await load();
+        } catch (e) {
+          toast('삭제하지 못했어요: ' + (e.message || e), true);
+        }
+      });
+    });
+  }
+
+  await load();
+</script>
+
+</body>
+</html>
