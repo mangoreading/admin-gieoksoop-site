@@ -43,6 +43,7 @@
             <option value="annual">연간</option>
             <option value="other">기타/없음</option>
           </select>
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap;"><input type="checkbox" id="showHidden"> 숨긴 회원 보기</label>
         </div>
         <span class="muted" id="countLabel"></span>
       </div>
@@ -101,7 +102,7 @@
       .map(
         (u) => `
       <tr>
-        <td>${escapeHtml(u.name || '-')}</td>
+        <td>${escapeHtml(u.name || '-')}${u.admin_hidden ? ' <span class="pill">숨김</span>' : ''}</td>
         <td>${escapeHtml(u.email || '-')}</td>
         <td class="muted">${fmtDate(u.created_at)}</td>
         <td>${statusPill(u.subscription_status)}</td>
@@ -124,6 +125,7 @@
     const statusQ = statusFilter.value;
     const planQ = planFilter.value;
     return allUsers.filter((u) => {
+      if (u.admin_hidden && !showHidden.checked) return false;
       if (needle && !((u.name || '').toLowerCase().includes(needle) || (u.email || '').toLowerCase().includes(needle))) return false;
       if (statusQ && (u.subscription_status || 'none') !== statusQ) return false;
       if (planQ) {
@@ -134,6 +136,8 @@
     });
   }
 
+  const showHidden = document.getElementById('showHidden');
+  showHidden.addEventListener('change', () => render(filterList()));
   searchInput.addEventListener('input', () => render(filterList()));
   statusFilter.addEventListener('change', () => render(filterList()));
   planFilter.addEventListener('change', () => render(filterList()));
@@ -147,7 +151,7 @@
         const tb = b.created_at && b.created_at.toDate ? b.created_at.toDate().getTime() : 0;
         return tb - ta;
       });
-    render(allUsers);
+    render(filterList());
     // 다른 화면(구독결제 관리 등)에서 ?uid=... 로 들어오면 그 회원의 상세 팝업을 바로 연다.
     const openUid = new URLSearchParams(location.search).get('uid');
     if (openUid) {

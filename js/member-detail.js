@@ -75,6 +75,14 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
               ${u.suspend_note ? `<p class="form-hint">메모: ${escapeHtml(u.suspend_note)}</p>` : ''}
               <p class="form-hint">명의도용, 불합리한 민원 등이 확인됐을 때 서비스 이용을 강제로 정지시켜요. 실제 로그인 차단은 앱/서버 쪽에서 이 값(suspended)을 확인하도록 연동돼 있어야 동작해요.</p>
             </div>
+            <div class="form-field">
+              <label>관리자 목록 표시</label>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                ${u.admin_hidden ? '<span class="pill">목록에서 숨김</span>' : '<span class="pill pill-ok">목록에 표시 중</span>'}
+                <button type="button" class="btn btn-outline btn-sm" id="hideBtn">${u.admin_hidden ? '목록에 다시 표시' : '목록에서 숨기기'}</button>
+              </div>
+              <p class="form-hint">숨겨도 회원 정보와 결제 기록은 지워지지 않아요. 회원관리 목록에서만 안 보이고, "숨긴 회원 보기"를 체크하면 다시 볼 수 있어요.</p>
+            </div>
             <p class="form-hint" style="margin-bottom:16px;">uid: ${escapeHtml(u.id)}</p>
           </div>
 
@@ -135,6 +143,20 @@ export function createMemberDetail({ adminLabel, getUsers, onChange }) {
       document.getElementById('suspendBtn').addEventListener('click', () => {
         if (u.suspended) openResumeConfirm(u);
         else openSuspendConfirm(u);
+      });
+      document.getElementById('hideBtn').addEventListener('click', async () => {
+        const hide = !u.admin_hidden;
+        try {
+          await updateDoc(doc(db, 'users', u.id), hide
+            ? { admin_hidden: true, admin_hidden_at: new Date(), admin_hidden_by: adminLabel }
+            : { admin_hidden: false });
+          u.admin_hidden = hide;
+          toast(hide ? '관리자 목록에서 숨겼어요.' : '관리자 목록에 다시 표시해요.');
+          onChange();
+          if (hide) closeModal(); else openDetail(u.id);
+        } catch (e) {
+          toast('처리하지 못했어요: ' + (e.message || e), true);
+        }
       });
       document.getElementById('addPaymentBtn').addEventListener('click', () => openPaymentEditor(u));
       loadPayments(uid);
